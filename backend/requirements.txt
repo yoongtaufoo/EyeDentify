@@ -1,0 +1,23 @@
+# EyeDentify Backend Dependencies
+# Install with: pip install -r requirements.txt
+
+# FastAPI & Server
+fastapi>=0.115.0
+uvicorn[standard]>=0.34.0
+python-multipart>=0.0.18
+httpx>=0.28.0
+
+# Supabase
+supabase>=2.15.0
+
+# AI - GLM (Chatbot reasoning via z.ai / OpenAI compatible)
+openai>=1.60.0
+
+# AI - Google Gemini (Gemma image description)
+google-generativeai>=0.8.0
+
+# YOLO Object Detection
+ultralytics>=8.3.0
+
+# Environment variables
+python-dotenv>=1.0.0
