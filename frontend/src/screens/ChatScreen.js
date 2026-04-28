@@ -42,10 +42,10 @@ import {
   Directions,
 } from 'react-native-gesture-handler';
 import { CameraView, useCameraPermissions } from 'expo-camera';
-import { Audio, requestPermissionsAsync, recordAsync } from 'expo-audio';
+import { AudioModule, useAudioRecorder, RecordingPresets, setAudioModeAsync, useAudioPlayer } from 'expo-audio';
 import * as Speech from 'expo-speech';
 import * as Haptics from 'expo-haptics';
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 import { useAuth } from '../contexts/AuthContext';
 import { getChatHistory, processImage, sendChatMessage, sendAudioMessage } from '../services/apiService';
 
@@ -80,8 +80,20 @@ export default function ChatScreen() {
   // ---- Camera ----
   const [permission, requestPermission] = useCameraPermissions();
   const cameraRef = useRef(null);
-  const recordingRef = useRef(null);
+  // ---- Audio Recording + Playback (expo-audio v1.x — works in Expo Go) ----
+  const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
+  const [playbackUri, setPlaybackUri] = useState(null);
+  const player = useAudioPlayer(playbackUri);
   const flatListRef = useRef(null);
+
+  /** Replay audio on every press — seek to start then play */
+  const handlePlayVoice = (uri) => {
+    setPlaybackUri(uri);
+    setTimeout(() => {
+      try { player.seekTo(0); } catch {}
+      try { player.play(); } catch {}
+    }, 100);
+  };
 
   // ============================================================
   // ON MOUNT: Load history + welcome user
@@ -109,6 +121,8 @@ export default function ChatScreen() {
       }, 150);
     }
   }, [messages]);
+
+  // Track keyboard height for Android (pan mode handles this natively now)
 
   // ============================================================
   // DATA LOADING
@@ -248,96 +262,79 @@ export default function ChatScreen() {
   };
 
   // ============================================================
-  // AUDIO RECORDING (only in CHAT view)
+  // AUDIO RECORDING (Expo Go compatible — sends to backend for STT)
   // ============================================================
   const startRecording = async () => {
     try {
-      // FIXED: Use the new SDK 54 function names
-      const perm = await requestPermissionsAsync();
+      const perm = await AudioModule.requestRecordingPermissionsAsync();
       if (!perm.granted) {
         Speech.speak('Microphone permission is required.');
         return;
       }
 
+      await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-      
-      // Start recording using the new recordAsync
-      recordingRef.current = await recordAsync();
+
+      await recorder.prepareToRecordAsync();
+      recorder.record();
       setIsRecording(true);
       Speech.speak('Recording...');
-
     } catch (error) {
       console.error('Recording start error:', error);
       Speech.speak('Could not start recording.');
     }
   };
-  // const startRecording = async () => {
-  //   try {
-  //     const perm = await Audio.requestPermissionsAsync();
-  //     if (perm.status !== 'granted') {
-  //       Speech.speak('Microphone permission is required for voice messages.');
-  //       return;
-  //     }
-
-  //     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-  //     await Audio.setAudioModeAsync({
-  //       allowsRecordingIOS: true,
-  //       playsInSilentModeIOS: true,
-  //     });
-
-  //     recordingRef.current = await Audio.recordAsync();
-  //     setIsRecording(true);
-  //     Speech.speak('Recording... Release when done speaking.');
-
-  //   } catch (error) {
-  //     console.error('Recording start error:', error);
-  //     Speech.speak('Could not start recording.');
-  //   }
-  // };
 
   const stopRecordingAndSend = async () => {
-    if (!recordingRef.current) return;
+    if (!recorder.isRecording) return;
 
     setIsRecording(false);
     setLoading(true);
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
 
     try {
-      const recording = recordingRef.current;
-      await recording.stopAndUnloadAsync();
-      const uri = recording.getURI();
-      recordingRef.current = null;
+      await recorder.stop();
+      const uri = recorder.uri;
 
-      await Audio.setAudioModeAsync({ allowsRecordingIOS: false });
+      if (uri) {
+        const base64 = await FileSystem.readAsStringAsync(uri, { encoding: 'base64' });
 
-      // Read file as base64
-      const base64 = await FileSystem.readAsStringAsync(uri, { encoding: 'base64' });
+        // Show voice message placeholder
+        const voiceMsg = {
+          id: `voice-${Date.now()}`,
+          role: 'user',
+          content: '🎤 Voice message',
+          audioUri: uri,
+          timestamp: new Date().toISOString(),
+        };
+        setMessages((prev) => [...prev, voiceMsg]);
 
-      // Add voice indicator
-      const voiceMsg = {
-        id: `voice-${Date.now()}`,
-        role: 'user',
-        content: '🎤 Voice message',
-        timestamp: new Date().toISOString(),
-      };
-      setMessages((prev) => [...prev, voiceMsg]);
+        // Send to backend for transcription + AI response
+        const result = await sendAudioMessage(user.id, base64);
 
-      // Send to backend
-      const result = await sendAudioMessage(user.id, base64);
+        // Update bubble with transcribed text
+        if (result?.audio_text) {
+          setMessages((prev) =>
+            prev.map((msg) =>
+              msg.id === voiceMsg.id ? { ...msg, content: result.audio_text } : msg
+            )
+          );
+        }
 
-      const assistantMsg = {
-        id: `assistant-${Date.now()}`,
-        role: 'assistant',
-        content: result.response || result.audio_text || 'Sorry, I could not generate a response.',
-        timestamp: new Date().toISOString(),
-      };
-      setMessages((prev) => [...prev, assistantMsg]);
-      Speech.speak(assistantMsg.content, { rate: 0.88 });
-
+        const assistantMsg = {
+          id: `assistant-${Date.now()}`,
+          role: 'assistant',
+          content: result.response || result.audio_text || 'Sorry, I could not generate a response.',
+          timestamp: new Date().toISOString(),
+        };
+        setMessages((prev) => [...prev, assistantMsg]);
+        Speech.speak(assistantMsg.content, { rate: 0.88 });
+      }
     } catch (error) {
       console.error('Recording/send error:', error);
       Speech.speak("I'm sorry, I couldn't process that. Please try again.");
     } finally {
+      setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true }).catch(() => {});
       setLoading(false);
     }
   };
@@ -644,6 +641,19 @@ export default function ChatScreen() {
           {item.content}
         </Text>
 
+        {/* Voice playback button */}
+        {item.audioUri && (
+          <TouchableOpacity
+            style={styles.voicePlayButton}
+            onPress={() => handlePlayVoice(item.audioUri)}
+            accessible={true}
+            accessibilityLabel="Play voice message"
+            accessibilityRole="button"
+          >
+            <Text style={styles.voicePlayText}>▶︎ Play voice</Text>
+          </TouchableOpacity>
+        )}
+
         {/* Show detected objects if present */}
         {item.objects && item.objects.length > 0 && (
           <Text style={styles.objectsText}>
@@ -689,8 +699,10 @@ export default function ChatScreen() {
               </TouchableOpacity>
             </View>
 
-            {/* Messages List */}
-            <View style={styles.messagesArea}>
+            {/* Messages + Input — keyboard height pushes content up */}
+            <View style={{ flex: 1 }}>
+              {/* Messages List */}
+              <View style={styles.messagesArea}>
               <FlatList
                 ref={flatListRef}
                 data={messages}
@@ -724,11 +736,7 @@ export default function ChatScreen() {
             </View>
 
             {/* Bottom Input Bar */}
-            <KeyboardAvoidingView
-              behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-              keyboardVerticalOffset={0}
-            >
-              <View style={styles.bottomBar}>
+            <View style={styles.bottomBar}>
                 {/* Left edge hint */}
                 <TouchableOpacity
                   style={styles.cameraHintButton}
@@ -802,7 +810,7 @@ export default function ChatScreen() {
                   ← Tap left: Camera &nbsp;|&nbsp; 🎤 Hold: Talk &nbsp;|&nbsp; 👆👆 2-finger: Logout
                 </Text>
               </View>
-            </KeyboardAvoidingView>
+            </View>
           </SafeAreaView>
         </GestureDetector>
       )}
@@ -1062,6 +1070,19 @@ const styles = StyleSheet.create({
     color: 'rgba(255,255,255,0.25)',
     marginTop: 4,
     textAlign: 'right',
+  },
+  voicePlayButton: {
+    marginTop: 8,
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    alignSelf: 'flex-start',
+  },
+  voicePlayText: {
+    color: '#FFF',
+    fontSize: 14,
+    fontWeight: '600',
   },
 
   // Typing indicator

@@ -1,61 +1,92 @@
 """
 audio.py - Speech-to-text processing.
-Converts audio recordings to text using Whisper via OpenAI-compatible API.
+Converts audio recordings to text using Google Cloud Speech-to-Text API.
 Shared by both in-app chat and hardware chat modules.
 """
 
 import os
 import base64
 import tempfile
-from openai import AsyncOpenAI
 
-# Using a STT service - you can swap this out for Whisper, Deepgram, etc.
-# Defaulting to z.ai which supports audio transcription
-stt_client = AsyncOpenAI(
-    api_key=os.getenv("GLM_API_KEY"),
-    base_url="https://api.z.ai/v4"
-)
+from google.cloud import speech_v1p1beta1 as speech
 
 
-async def transcribe_audio(audio_bytes: bytes, mime_type: str = "webm/opus") -> str:
+def _get_speech_client():
+    """Create a Google Cloud Speech client using credentials from env."""
+    # Supports GOOGLE_APPLICATION_CREDENTIALS (service account JSON path)
+    # or GOOGLE_CLOUD_API_KEY (API key string for basic usage)
+    creds_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
+    api_key = os.getenv("GOOGLE_CLOUD_API_KEY")
+
+    if creds_path:
+        return speech.SpeechClient.from_service_account_json(creds_path)
+    elif api_key:
+        # Use default credentials + API key via client options
+        from google.api_core.client_options import ClientOptions
+        opts = ClientOptions(api_key=api_key, quota_project=None)
+        return speech.SpeechClient(client_options=opts)
+    else:
+        # Fall back to Application Default Credentials (ADC)
+        return speech.SpeechClient()
+
+
+async def transcribe_audio_base64(audio_b64: str) -> str:
     """
-    Transcribe audio bytes to text.
-    
+    Transcribe base64-encoded audio (from React Native expo-audio recording).
+    Uses Google Cloud Speech-to-Text — accurate, fast, supports many languages.
+
     Args:
-        audio_bytes: Raw audio recording bytes
-        mime_type: MIME type of the audio format
-        
-    Returns:
-        Transcribed text string
-    """
-    # Write audio to temp file for API submission
-    suffix = ".webm" if "webm" in mime_type else (".m4a" if "mp4" in mime_type else ".wav")
-    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
-        tmp.write(audio_bytes)
-        tmp_path = tmp.name
+        audio_b64: Base64-encoded audio string (expo-audio records as m4a/wav)
 
+    Returns:
+        Transcribed text string, or empty string on failure
+    """
     try:
-        with open(tmp_path, "rb") as f:
-            # Try OpenAI-style transcription API
-            import aiofiles
-            response = await stt_client.audio.transcriptions.create(
-                model="whisper-1",
-                file=f,
-                language="en",
+        client = _get_speech_client()
+
+        # Decode base64 back to bytes
+        audio_bytes = base64.b64decode(audio_b64)
+
+        # Write to temp file (Google Cloud STT accepts file content or raw bytes)
+        with tempfile.NamedTemporaryFile(suffix=".m4a", delete=False) as tmp:
+            tmp.write(audio_bytes)
+            tmp_path = tmp.name
+
+        try:
+            with open(tmp_path, "rb") as f:
+                audio_content = f.read()
+
+            # Configure recognition: English, enhanced model, auto punctuation
+            config = speech.RecognitionConfig(
+                encoding=speech.RecognitionConfig.AudioEncoding.MP4,
+                sample_rate_hertz=44100,
+                language_code="en-US",
+                enable_automatic_punctuation=True,
+                model="latest_long",
             )
-            return response.text
+
+            audio = speech.Audio(content=audio_content)
+
+            print("[Audio] Sending to Google Cloud STT...")
+            response = client.recognize(config=config, audio=audio)
+
+            # Extract full transcription from all results
+            parts = []
+            for result in response.results:
+                if result.alternatives:
+                    parts.append(result.alternatives[0].transcript)
+
+            text = " ".join(parts).strip()
+            if text:
+                print(f"[Audio] Transcribed ({len(text)} chars): {text[:80]}...")
+            else:
+                print("[Audio] No transcription returned")
+
+            return text
+
+        finally:
+            os.unlink(tmp_path)
+
     except Exception as e:
         print(f"[Audio] Transcription error: {e}")
-        # Fallback: return empty string, let chatbot handle it
         return ""
-    finally:
-        import os as _os
-        _os.unlink(tmp_path)
-
-
-async def transcribe_audio_base64(audio_b64: str, mime_type: str = "webm/opus") -> str:
-    """
-    Convenience function that accepts base64-encoded audio (how React Native sends it).
-    """
-    audio_bytes = base64.b64decode(audio_b64)
-    return await transcribe_audio(audio_bytes, mime_type)

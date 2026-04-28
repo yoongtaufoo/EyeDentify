@@ -40,9 +40,12 @@ def get_profile(user_id: str) -> Optional[dict]:
 
 def create_profile(user_id: str, full_name: str = None, pi_serial: str = None, keyboard_type: str = "normal") -> dict:
     """Updated to include keyboard preference and use upsert."""
-    data = {"id": user_id, "keyboard_type": keyboard_type}
+    data = {"id": user_id}
     if full_name: data["full_name"] = full_name
     if pi_serial: data["pi_serial"] = pi_serial
+    # Only include keyboard_type if the column exists (avoid PGRST204 errors)
+    # if keyboard_type and keyboard_type != "normal":
+    #     data["keyboard_type"] = keyboard_type
 
     print(f"[DEBUG] Upserting profile for user {user_id} with data: {data}")
     try:
@@ -78,7 +81,6 @@ def get_or_create_profile(user_id: str, email: str = None) -> dict:
         new_data = {
             "id": user_id,
             "full_name": email.split('@')[0] if email else "User",
-            "keyboard_type": "normal"
         }
         try:
             response = supabase.table("profiles").insert(new_data).execute()
@@ -89,14 +91,19 @@ def get_or_create_profile(user_id: str, email: str = None) -> dict:
             auth_user = get_auth_user(user_id)
             if auth_user:
                 print(f"[FALLBACK] Using auth user data for {user_id}")
-                # Extract metadata from auth user
-                metadata = auth_user.get('user_metadata', {})
+                # Supabase auth returns a User object (not dict), access via attribute
+                meta = getattr(auth_user, 'user_metadata', None) or {}
+                if isinstance(meta, dict):
+                    name_from_meta = meta.get('full_name')
+                else:
+                    try:
+                        name_from_meta = dict(meta).get('full_name') if hasattr(meta, '__iter__') else None
+                    except (TypeError, ValueError):
+                        name_from_meta = None
+                
                 return {
                     "id": user_id,
-                    "full_name": metadata.get('full_name') or email.split('@')[0] if email else "User",
-                    "keyboard_type": metadata.get('keyboard_type', 'normal'),
-                    "pi_serial": None,
-                    # Add other required fields with defaults
+                    "full_name": name_from_meta or getattr(auth_user, 'email', '') or email.split('@')[0] if email else "User",
                 }
             else:
                 # Ultimate fallback: return minimal profile
@@ -104,8 +111,6 @@ def get_or_create_profile(user_id: str, email: str = None) -> dict:
                 return {
                     "id": user_id,
                     "full_name": email.split('@')[0] if email else "User",
-                    "keyboard_type": "normal",
-                    "pi_serial": None
                 }
     
     return profile
@@ -237,6 +242,9 @@ def save_chat_message(
     Save a chat message to history.
     SHARED - both in-app and device chat use this.
     """
+    # Ensure profile exists to satisfy FK constraint
+    get_or_create_profile(user_id)
+
     data = {
         "user_id": user_id,
         "role": role,
@@ -275,7 +283,21 @@ def get_chat_history(user_id: str, limit: int = 50) -> list:
             .execute()
         )
         data = response.data if response.data else []
-        return list(reversed(data))
+        # Ensure every item is a plain dict (Supabase may return model objects)
+        result = []
+        for item in data:
+            if isinstance(item, dict):
+                result.append(item)
+            elif hasattr(item, '__dict__'):
+                result.append(dict(item.__dict__))
+            elif hasattr(item, 'model_dump'):  # Pydantic
+                result.append(item.model_dump())
+            else:
+                try:
+                    result.append(dict(item))
+                except (TypeError, ValueError):
+                    result.append({"role": "unknown", "content": str(item)})
+        return list(reversed(result))
     except Exception as e:
         # This prevents the 500 error that crashes the frontend
         print(f"DATABASE CRASH: {str(e)}")

@@ -11,10 +11,10 @@ from openai import AsyncOpenAI
 
 from database import get_chat_history, save_chat_message, get_memories_by_date, get_recent_memories
 
-# GLM Client (z.ai)
+# GLM Client (z.ai / BigModel)
 ai_client = AsyncOpenAI(
     api_key=os.getenv("GLM_API_KEY"),
-    base_url="https://api.z.ai/v4"
+    base_url="https://open.bigmodel.cn/api/paas/v4"
 )
 
 SYSTEM_PROMPT = """You are EyeDentify, an AI assistant for blind and visually impaired users.
@@ -149,7 +149,7 @@ async def _handle_memory_response(user_id: str, question: str) -> str:
     
     # Use GLM to produce a natural summary/response
     response = await ai_client.chat.completions.create(
-        model="glm-4",
+        model="GLM-4.7-Flash",
         messages=[
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": f"The user is asking about their past experiences.\n\nQuestion: {question}\n\nHere are their memory logs:\n{context}\n\nProvide a helpful, concise answer."}
@@ -162,7 +162,7 @@ async def _handle_memory_response(user_id: str, question: str) -> str:
 async def _handle_image_qa(user_id: str, question: str, description: str) -> str:
     """Handle when user asks a question about the currently captured image."""
     response = await ai_client.chat.completions.create(
-        model="glm-4",
+        model="GLM-4.7-Flash",
         messages=[
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": f"The user just took a photo and here's its AI-generated description:\n\n{description}\n\nNow the user asks: {question}\n\nAnswer based on the image description. Be helpful and descriptive."}
@@ -190,7 +190,7 @@ async def _handle_general_chat(user_id: str, message: str) -> str:
     messages.append({"role": "user", "content": message})
     
     response = await ai_client.chat.completions.create(
-        model="glm-4",
+        model="GLM-4.7-Flash",
         messages=messages,
         temperature=0.7,
     )

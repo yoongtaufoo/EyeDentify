@@ -38,13 +38,11 @@ from fastapi.responses import JSONResponse
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
-    body = await request.body()
     print(f"DEBUG: Validation Error at {request.url.path}")
-    print(f"DEBUG: Body: {body.decode()}")
     print(f"DEBUG: Errors: {exc.errors()}")
     return JSONResponse(
         status_code=422,
-        content={"detail": exc.errors(), "body": body.decode()},
+        content={"detail": exc.errors()},
     )
 
 # ============================================================
@@ -220,7 +218,7 @@ async def vision_process(
 @app.post("/chat/send")
 async def chat_send(
     user_id: str = Form(...),
-    message: str = Form(...),
+    message: str = Form(""),
     audio_base64: str = Form(None),
     current_memory_id: str = Form(None),
     current_description: str = Form(None),
@@ -237,10 +235,12 @@ async def chat_send(
     """
     try:
         # Step 1: Transcribe audio if provided
+        audio_text = None
         if audio_base64:
             from audio import transcribe_audio_base64
-            message = await transcribe_audio_base64(audio_base64)
-            if not message:
+            audio_text = await transcribe_audio_base64(audio_base64)
+            message = audio_text or ""
+            if not audio_text:
                 return {"response": "I couldn't understand that audio. Could you try again?"}
         
         # Step 2: Process through chat engine
@@ -252,7 +252,7 @@ async def chat_send(
             current_memory_id=current_memory_id,
         )
         
-        return {"response": response_text}
+        return {"response": response_text, "audio_text": audio_text}
     
     except Exception as e:
         print(f"[API] Chat error: {e}")

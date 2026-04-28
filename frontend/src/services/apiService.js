@@ -96,20 +96,18 @@ export async function processImage(userId, imageUri) {
 export async function sendChatMessage(userId, message, options = {}) {
   const { memoryId, description } = options;
   
-  const params = new URLSearchParams({
-    user_id: userId,
-    message,
-  });
-  if (memoryId) params.append('current_memory_id', memoryId);
-  if (description) params.append('current_description', description);
+  const formData = new FormData();
+  formData.append('user_id', userId);
+  formData.append('message', message);
+  if (memoryId) formData.append('current_memory_id', memoryId);
+  if (description) formData.append('current_description', description);
 
-  const response = fetch(`${BACKEND_URL}/chat/send`, {
+  const response = await fetch(`${BACKEND_URL}/chat/send`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: params,
+    body: formData,
   });
   
-  const data = await (await response).json();
+  const data = await response.json();
   if (!response.ok) throw new Error(data.detail || 'Chat failed');
   return data;
 }
@@ -120,20 +118,29 @@ export async function sendChatMessage(userId, message, options = {}) {
  */
 export async function sendAudioMessage(userId, audioBase64, options = {}) {
   const { memoryId, description } = options;
-  
-  const params = new URLSearchParams({ user_id: userId });
-  params.append('audio_base64', audioBase64);
-  if (memoryId) params.append('current_memory_id', memoryId);
-  if (description) params.append('current_description', description);
+
+  const formData = new FormData();
+  formData.append('user_id', userId);
+  formData.append('message', 'audio'); // placeholder; actual text from audio transcription
+  formData.append('audio_base64', audioBase64);
+  if (memoryId) formData.append('current_memory_id', memoryId);
+  if (description) formData.append('current_description', description);
 
   const response = await fetch(`${BACKEND_URL}/chat/send`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: params,
+    body: formData,
   });
 
   const data = await response.json();
-  if (!response.ok) throw new Error(data.detail || 'Chat failed');
+
+  // Handle validation errors gracefully
+  if (!response.ok) {
+    const detail = Array.isArray(data.detail)
+      ? data.detail.map((e) => e.msg).join(', ')
+      : (data.detail || 'Chat failed');
+    throw new Error(detail);
+  }
+
   return data;
 }
 

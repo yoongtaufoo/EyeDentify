@@ -21,3 +21,9 @@ ultralytics>=8.3.0
 
 # Environment variables
 python-dotenv>=1.0.0
+
+# Audio transcription (async file I/O)
+aiofiles>=23.0.0
+
+# Google Cloud Speech-to-Text
+google-cloud-speech>=2.29.0
