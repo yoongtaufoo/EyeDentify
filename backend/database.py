@@ -39,22 +39,24 @@ def get_profile(user_id: str) -> Optional[dict]:
 #     return response.data[0]
 
 def create_profile(user_id: str, full_name: str = None, pi_serial: str = None, keyboard_type: str = "normal") -> dict:
-    """Updated to include keyboard preference."""
+    """Updated to include keyboard preference and use upsert."""
     data = {"id": user_id, "keyboard_type": keyboard_type}
     if full_name: data["full_name"] = full_name
     if pi_serial: data["pi_serial"] = pi_serial
 
-    print(f"[DEBUG] Creating profile for user {user_id} with data: {data}")
+    print(f"[DEBUG] Upserting profile for user {user_id} with data: {data}")
     try:
-        response = supabase.table("profiles").insert(data).execute()
+        # Use upsert to handle cases where Auth exists but DB profile was partially created or exists
+        response = supabase.table("profiles").upsert(data).execute()
         if not response.data:
-            print(f"[ERROR] Profile creation failed: {response.error if hasattr(response, 'error') else 'No data returned'}")
-            raise Exception(f"Profile creation failed: {response.error if hasattr(response, 'error') else 'No data returned'}")
-        print(f"[DEBUG] Profile created successfully: {response.data[0]}")
+            print(f"[ERROR] Profile creation failed: No data returned")
+            raise Exception(f"Profile creation failed")
+        print(f"[DEBUG] Profile created/updated successfully: {response.data[0]}")
         return response.data[0]
     except Exception as e:
         print(f"[EXCEPTION] Error in create_profile: {e}")
         raise
+
 
 def get_auth_user(user_id: str) -> Optional[dict]:
     """Get user data from Supabase Auth table (requires service role key)."""
@@ -131,6 +133,9 @@ def save_memory(
     Save a memory record to the database.
     This is a SHARED function - both phone app and Pi device call this.
     """
+    # FIX: Ensure profile exists before saving memory to avoid FK error
+    get_or_create_profile(user_id)
+
     data = {
         "user_id": user_id,
         "source": source,
@@ -142,8 +147,16 @@ def save_memory(
     if embedding:
         data["embedding"] = embedding
 
-    response = supabase.table("memories").insert(data).execute()
-    return response.data[0]
+    try:
+        response = supabase.table("memories").insert(data).execute()
+        if not response.data:
+            raise Exception("No data returned from memory insert")
+        return response.data[0]
+    except Exception as e:
+        print(f"[DATABASE ERROR] save_memory failed: {e}")
+        # Return a mock record so the app doesn't crash, but log the error
+        return {"id": "error", "description": description}
+
 
 
 def get_memories_by_date(user_id: str, date_str: str = None, days_back: int = None) -> list:

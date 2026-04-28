@@ -571,6 +571,15 @@ const signUpPasswordless = useCallback(async (email, fullName, keyboardType) => 
     // 2. ONLY the secret password goes to SecureStore (Small limit, high security)
     await SecureStore.setItemAsync('hidden_pw', hiddenPw);
     
+    // 3. CALL BACKEND TO CREATE PROFILE IN DATABASE
+    try {
+      await apiSignup(email, hiddenPw, fullName, keyboardType);
+      console.log('Backend profile creation initiated');
+    } catch (e) {
+      console.log('Profile sync note:', e.message || JSON.stringify(e));
+      // Don't throw - allow registration to succeed even if backend fails
+    }
+    
     return data;
   }, []);
 

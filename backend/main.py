@@ -33,9 +33,24 @@ app.add_middleware(
 )
 
 
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    body = await request.body()
+    print(f"DEBUG: Validation Error at {request.url.path}")
+    print(f"DEBUG: Body: {body.decode()}")
+    print(f"DEBUG: Errors: {exc.errors()}")
+    return JSONResponse(
+        status_code=422,
+        content={"detail": exc.errors(), "body": body.decode()},
+    )
+
 # ============================================================
 # HEALTH CHECK
 # ============================================================
+
 
 @app.get("/")
 async def health():

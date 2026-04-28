@@ -110,11 +110,10 @@ function AuthNavigator() {
       {user ? (
         <Stack.Screen name="Chat" component={ChatScreen} />
       ) : (
-        <Stack.Screen name="Login" component={LoginScreen} />
-      )}
-      {/* Always include Register screen but hide it from initial route */}
-      {!user && (
-        <Stack.Screen name="Register" component={RegisterScreen} />
+        <>
+          <Stack.Screen name="Login" component={LoginScreen} />
+          <Stack.Screen name="Register" component={RegisterScreen} />
+        </>
       )}
     </Stack.Navigator>
   );

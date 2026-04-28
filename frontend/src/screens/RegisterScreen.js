@@ -69,15 +69,8 @@ export default function RegisterScreen({ navigation }) {
       try {
         await signUpPasswordless(email, "New User", inputMode);
         Speech.speak("Account secured. Welcome to EyeDentify.");
-        // Navigate to Login screen after successful registration
-        // Use navigate instead of replace to avoid navigation errors
-        setTimeout(() => {
-          if (navigation.canGoBack()) {
-            navigation.goBack();
-          } else {
-            navigation.navigate('Login');
-          }
-        }, 100);
+        // No manual navigation needed! 
+        // AuthContext will update 'user', and App.js will auto-switch to Chat.
       } catch (error) {
         console.error('Registration error:', error);
         Speech.speak("Registration failed. Please try again.");
@@ -98,11 +91,7 @@ export default function RegisterScreen({ navigation }) {
     .direction(Directions.DOWN)
     .onEnd(() => {
       // Use navigate instead of replace to avoid navigation errors
-      if (navigation.canGoBack()) {
-        navigation.goBack();
-      } else {
-        navigation.navigate('Login');
-      }
+      navigation.navigate('Login');
       Speech.speak("Switching to Login.");
     })
     .runOnJS(true);

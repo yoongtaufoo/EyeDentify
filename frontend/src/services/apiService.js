@@ -12,31 +12,43 @@ const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL || 'http://192.168.100.9
 // ============================================================
 
 export async function signup(email, password, fullName, keyboardType = 'normal') {
+  const formData = new FormData();
+  formData.append('email', email);
+  formData.append('password', password);
+  formData.append('full_name', fullName || '');
+  formData.append('keyboard_type', keyboardType || 'normal');
+
   const response = await fetch(`${BACKEND_URL}/auth/signup`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({
-      email,
-      password,
-      full_name: fullName || '',
-      keyboard_type: keyboardType,
-    }),
+    body: formData,
   });
+  
   const data = await response.json();
-  if (!response.ok) throw new Error(data.detail || 'Signup failed');
+  if (!response.ok) {
+    const errorMsg = typeof data.detail === 'object' 
+      ? JSON.stringify(data.detail) 
+      : (data.detail || 'Signup failed');
+    throw new Error(errorMsg);
+  }
   return data;
 }
 
+
+
 export async function login(email, password) {
+  const formData = new FormData();
+  formData.append('email', email);
+  formData.append('password', password);
+
   const response = await fetch(`${BACKEND_URL}/auth/login`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({ email, password }),
+    body: formData,
   });
   const data = await response.json();
   if (!response.ok) throw new Error(data.detail || data.error_description || 'Login failed');
   return data;
 }
+
 
 // ============================================================
 // VISION - Upload image for AI analysis
@@ -157,7 +169,8 @@ export async function getChatHistory(userId) {
     }
 
     // 3. Only parse if it looks like JSON
-    return JSON.parse(rawText);
+    const data = JSON.parse(rawText);
+    return data.history || [];
   } catch (error) {
     console.error("Network Error:", error.message);
     // Let the user know without a red screen

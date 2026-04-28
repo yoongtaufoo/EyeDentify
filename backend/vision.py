@@ -19,8 +19,8 @@ async def process_image(user_id: str, image_bytes: bytes, source: str = "phone")
         # 1. Prepare image for Gemini
         img = Image.open(io.BytesIO(image_bytes))
         
-        # 2. Initialize the model (1.5 Flash is fastest for hackathons)
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        # 2. Initialize the model
+        model = genai.GenerativeModel('gemma-4-26b-a4b-it')
         
         prompt = (
             "You are the eyes for a blind person. Describe what is in this image "
