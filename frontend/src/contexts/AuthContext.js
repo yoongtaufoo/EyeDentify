@@ -491,6 +491,7 @@ import * as Speech from 'expo-speech';
 import * as SecureStore from 'expo-secure-store';
 import AsyncStorage from '@react-native-async-storage/async-storage'; // New Import
 import { supabase } from '../lib/supabaseClient';
+import { signup as apiSignup } from '../services/apiService';
 
 const AuthContext = createContext(null);
 

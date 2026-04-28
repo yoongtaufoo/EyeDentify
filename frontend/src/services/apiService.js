@@ -11,7 +11,7 @@ const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL || 'http://192.168.100.9
 // AUTH
 // ============================================================
 
-export async function signup(email, password, fullName) {
+export async function signup(email, password, fullName, keyboardType = 'normal') {
   const response = await fetch(`${BACKEND_URL}/auth/signup`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -19,6 +19,7 @@ export async function signup(email, password, fullName) {
       email,
       password,
       full_name: fullName || '',
+      keyboard_type: keyboardType,
     }),
   });
   const data = await response.json();
