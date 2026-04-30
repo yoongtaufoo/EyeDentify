@@ -57,6 +57,12 @@ const VIEW = {
   CAMERA: 'camera',
 };
 
+// Accessibility helper: speaks when an element receives focus (Tab / TalkBack)
+const speakOnFocus = (message) => {
+  Speech.stop();
+  setTimeout(() => Speech.speak(message), 100);
+};
+
 // ============================================================
 // MAIN COMPONENT
 // ============================================================
@@ -565,7 +571,11 @@ export default function ChatScreen() {
             style={styles.permissionButton}
             onPress={() => requestPermission()}
             accessible={true}
+            focusable={true}
+            accessibilityRole="button"
             accessibilityLabel="Grant camera permission"
+            accessibilityHint="Tap to enable camera access"
+            onFocus={() => speakOnFocus('Enable Camera button. Tap to grant camera permission.')}
           >
             <Text style={styles.permissionButtonText}>Enable Camera</Text>
           </TouchableOpacity>
@@ -574,7 +584,9 @@ export default function ChatScreen() {
           style={styles.skipButton}
           onPress={() => setViewMode(VIEW.CHAT)}
           accessible={true}
+          focusable={true}
           accessibilityLabel="Use app without camera"
+          onFocus={() => speakOnFocus('Skip button. Tap to use app without camera.')}
         >
           <Text style={styles.skipButtonText}>Use without camera</Text>
         </TouchableOpacity>
@@ -641,8 +653,11 @@ export default function ChatScreen() {
             style={styles.voicePlayButton}
             onPress={() => handlePlayVoice(item.audioUri)}
             accessible={true}
-            accessibilityLabel="Play voice message"
+            focusable={true}
             accessibilityRole="button"
+            accessibilityLabel="Play voice message"
+            accessibilityHint="Double tap to listen to the voice message"
+            onFocus={() => speakOnFocus('Play voice message button. Tap to listen to the voice message.')}
           >
             <Text style={styles.voicePlayText}>▶︎ Play voice</Text>
           </TouchableOpacity>
@@ -686,8 +701,10 @@ export default function ChatScreen() {
                 onPress={handleLogout}
                 style={styles.logoutButton}
                 accessible={true}
+                focusable={true}
                 accessibilityLabel="Logout button"
                 accessibilityHint="Double tap to log out"
+                onFocus={() => speakOnFocus('Logout button. Double tap to log out.')}
               >
                 <Text style={styles.logoutText}>Logout</Text>
               </TouchableOpacity>
@@ -737,8 +754,11 @@ export default function ChatScreen() {
                   onPress={goToCamera}
                   activeOpacity={0.7}
                   accessible={true}
-                  accessibilityLabel="Open camera to take a photo"
-                  accessibilityHint="Tap left side of screen or here to open camera"
+                  focusable={true}
+                  accessibilityRole="button"
+                  accessibilityLabel="Camera button"
+                  accessibilityHint="Tap to open camera and take a photo"
+                  onFocus={() => speakOnFocus('Camera button. Tap to open camera and take a photo.')}
                 >
                   <Text style={styles.cameraIcon}>📷</Text>
                 </TouchableOpacity>
@@ -758,6 +778,7 @@ export default function ChatScreen() {
                   accessible={true}
                   accessibilityLabel="Message input field"
                   accessibilityHint="Type your question and press enter to send"
+                  onFocus={() => speakOnFocus('Message input field. Type your question and press enter to send.')}
                 />
 
                 {/* Long-press to Record Button */}
@@ -768,12 +789,21 @@ export default function ChatScreen() {
                       isRecording && styles.recordButtonActive,
                     ]}
                     accessible={true}
+                    focusable={true}
+                    accessibilityRole="button"
                     accessibilityLabel={
                       isRecording
-                        ? 'Recording... Release to send'
+                        ? 'Recording, release to send'
+                        : 'Voice record button'
+                    }
+                    accessibilityHint={
+                      isRecording
+                        ? 'Release to stop recording and send'
                         : 'Press and hold to record a voice message'
                     }
-                    accessibilityRole="button"
+                    onFocus={() => speakOnFocus(isRecording
+                      ? 'Recording button. Release to stop recording and send.'
+                      : 'Voice record button. Press and hold to record a voice message.')}
                   >
                     <Text style={styles.recordButtonText}>
                       {isRecording ? '●' : '🎤'}
@@ -791,8 +821,9 @@ export default function ChatScreen() {
                   disabled={!inputText.trim() || loading}
                   activeOpacity={0.7}
                   accessible={true}
-                  accessibilityLabel="Send message"
                   accessibilityRole="button"
+                  accessibilityLabel="Send message"
+                  accessibilityHint="Tap to send your typed message"
                 >
                   <Text style={styles.sendButtonText}>→</Text>
                 </TouchableOpacity>

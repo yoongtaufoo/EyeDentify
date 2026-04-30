@@ -70,53 +70,51 @@ async def signup(
     email: str = Form(...), 
     password: str = Form(...), 
     full_name: str = Form(None),
-    keyboard_type: str = Form("normal") # Added to match your database.py
+    keyboard_type: str = Form("normal")
 ):
-    """Register a new user and immediately create their DB profile."""
+    """Create a DB profile for a user already registered in Supabase Auth.
+    
+    The frontend (AuthContext.js) handles Supabase Auth sign-up directly.
+    This endpoint only creates the database profile and stores the real password.
+    """
     from database import supabase, create_profile
     
     try:
-        # 1. Sign up the user in Supabase Auth
-        # Note: By default, this sends a confirmation email. 
-        # If you want auto-confirm, change settings in Supabase Auth provider.
-        auth_response = supabase.auth.sign_up({
-            "email": email,
-            "password": password,
-            "options": {
-                "data": {
-                    "full_name": full_name,
-                    "keyboard_type": keyboard_type
-                }
-            }
-        })
+        # 1. Look up the user in Supabase Auth by email (they were already registered by frontend)
+        auth_response = supabase.auth.admin.list_users()
+        user_id = None
+        
+        # Search for user by email in the auth response
+        if hasattr(auth_response, 'users'):
+            for u in auth_response.users:
+                if u.email == email:
+                    user_id = u.id
+                    break
+        
+        if not user_id:
+            raise HTTPException(status_code=400, detail="User not found in Supabase Auth. Please register first.")
 
-        if not auth_response.user:
-            raise HTTPException(status_code=400, detail="Signup failed.")
-
-        user_id = auth_response.user.id
-
-        # 2. CREATE THE PROFILE IMMEDIATELY
-        # This prevents the "Ghost User" bug where Auth exists but DB is empty.
+        # 2. CREATE THE PROFILE IN DATABASE with the real password
         try:
             profile = create_profile(
                 user_id=user_id, 
                 full_name=full_name, 
-                keyboard_type=keyboard_type
+                keyboard_type=keyboard_type,
+                password=password
             )
-            print(f"LOG: Profile created for {user_id}")
+            print(f"LOG: Profile created for {user_id} with real password")
         except Exception as db_err:
-            print(f"CRITICAL: Auth succeeded but Profile failed: {db_err}")
-            # Optional: You could delete the auth user here to allow a retry
-            # supabase.auth.admin.delete_user(user_id) 
+            print(f"CRITICAL: Profile creation failed: {db_err}")
             raise HTTPException(status_code=500, detail="Database profile creation failed.")
 
         return {
             "status": "success",
-            "user": auth_response.user,
+            "user_id": user_id,
             "profile": profile,
-            "session": auth_response.session
         }
 
+    except HTTPException:
+        raise
     except Exception as e:
         print(f"[AUTH ERROR] {str(e)}")
         raise HTTPException(status_code=400, detail=str(e))
@@ -150,23 +148,54 @@ async def signup(
 
 @app.post("/auth/login")
 async def login(email: str = Form(...), password: str = Form(...)):
-    """Login via Supabase Auth."""
-    import httpx
-    auth_url = os.getenv("SUPABASE_AUTH_URL")
-    anon_key = os.getenv("SUPABASE_ANON_KEY")
-    
-    async with httpx.AsyncClient() as client:
-        resp = await client.post(
-            f"{auth_url}/auth/v1/token?grant_type=password",
-            json={"email": email, "password": password},
-            headers={"apikey": anon_key, "Authorization": f"Bearer {anon_key}"},
-        )
-        data = resp.json()
+    """Login by verifying email + real password against the database."""
+    from database import supabase
+
+    try:
+        # 1. Look up user profile by email in profiles table
+        response = supabase.table("profiles").select("*").eq("full_name", email).execute()
         
-        if resp.status_code == 200:
-            return {"user": data.get("user"), "session": data.get("access_token")}
-        else:
-            raise HTTPException(status_code=resp.status_code, detail=data.get("error_description", "Login failed"))
+        # Try to find by email - Supabase profiles might store email differently
+        # First try: look up via auth users
+        auth_response = supabase.auth.admin.list_users()
+        user_id = None
+        if hasattr(auth_response, 'users'):
+            for u in auth_response.users:
+                if u.email == email:
+                    user_id = u.id
+                    break
+        
+        if not user_id:
+            raise HTTPException(status_code=404, detail="Account not found.")
+
+        # 2. Get the profile with stored password
+        profile_resp = supabase.table("profiles").select("*").eq("id", user_id).execute()
+        if not profile_resp.data:
+            raise HTTPException(status_code=404, detail="Profile not found.")
+        
+        stored_password = profile_resp.data[0].get("password")
+        
+        # 3. Compare entered password with stored password (plain text comparison)
+        if not stored_password or stored_password != password:
+            raise HTTPException(status_code=401, detail="Invalid password.")
+
+        # 4. Create a Supabase session so the frontend gets a valid session
+        session_resp = supabase.auth.sign_in_with_password({
+            "email": email,
+            "password": password,
+        })
+
+        return {
+            "user": {"id": user_id, "email": email},
+            "profile": profile_resp.data[0],
+            "session": session_resp.session,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"[LOGIN ERROR] {str(e)}")
+        raise HTTPException(status_code=400, detail=f"Login failed: {str(e)}")
 
 
 @app.post("/auth/logout")
@@ -206,7 +235,19 @@ async def vision_process(
         # Read image from either source
         if image_base64:
             import base64 as b64mod
-            image_data = b64mod.urlsafe_b64decode(image_base64)
+            # Strip dataURL prefix if present: "data:image/jpeg;base64,xxxx" -> "xxxx"
+            b64_data = image_base64
+            if ',' in image_base64 and not image_base64.startswith(','):
+                # Could be a dataURL like "data:image/jpeg;base64,/9j/..."
+                prefix_part = image_base64.split(',')[0]
+                if 'base64' in prefix_part:
+                    b64_data = image_base64.split(',', 1)[1]
+                # Handle urlsafe base64 padding
+            b64_data += '=' * (-len(b64_data) % 4)  # pad to multiple of 4
+            try:
+                image_data = b64mod.urlsafe_b64decode(b64_data)
+            except Exception:
+                image_data = b64mod.b64decode(b64_data)
         elif image:
             image_data = await image.read()
         else:
@@ -239,6 +280,27 @@ async def vision_process(
     except Exception as e:
         print(f"[API] Vision error: {e}")
         raise HTTPException(status_code=500, detail=f"Vision processing failed: {str(e)}")
+
+
+# ============================================================
+# AUDIO TRANSCRIPTION (standalone, no DB required)
+# POST /audio/transcribe - raw audio → text via Whisper
+# ============================================================
+
+@app.post("/audio/transcribe")
+async def audio_transcribe(audio_base64: str = Form(...)):
+    """
+    Transcribe audio to text using Groq Whisper API.
+    Does NOT require a valid user_id or touch the database.
+    Used by the frontend voice input before sending the actual chat message.
+    """
+    from audio import transcribe_audio_base64
+    try:
+        text = await transcribe_audio_base64(audio_base64)
+        return {"text": text or "", "success": True}
+    except Exception as e:
+        print(f"[Audio] Transcription error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # ============================================================

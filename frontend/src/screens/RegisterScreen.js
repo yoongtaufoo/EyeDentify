@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { View, Text, StyleSheet, TextInput, TouchableOpacity, ActivityIndicator } from 'react-native';
 import { GestureDetector, Gesture, Directions } from 'react-native-gesture-handler';
 import * as Speech from 'expo-speech';
@@ -11,15 +11,30 @@ import { startListeningFlow } from '../utils/audioHandler';
 // View modes
 const VIEW = {
   MODE_PICKER: 'MODE_PICKER',
+  NAME_INPUT: 'NAME_INPUT',
   EMAIL_INPUT: 'EMAIL_INPUT',
+  PASSWORD_INPUT: 'PASSWORD_INPUT',
   BIOMETRIC: 'BIOMETRIC',
+};
+
+// Accessibility helper: speaks when an element receives focus
+const speakOnFocus = (message) => {
+  Speech.stop();
+  // Small delay to avoid cutting off previous speech
+  setTimeout(() => Speech.speak(message), 100);
 };
 
 export default function RegisterScreen({ navigation }) {
   const { signUpPasswordless, setInputMode, inputMode } = useAuth();
   const [view, setView] = useState(VIEW.MODE_PICKER);
   const [email, setEmail] = useState('');
+  const [name, setName] = useState('');
+  const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
+
+  const emailInputRef = useRef(null);
+  const nameInputRef = useRef(null);
+  const passwordInputRef = useRef(null);
 
   // Welcome message on mount
   useEffect(() => {
@@ -30,18 +45,61 @@ export default function RegisterScreen({ navigation }) {
   const selectMode = (mode) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     setInputMode(mode);
-    setView(VIEW.EMAIL_INPUT);
-    
+    setView(VIEW.NAME_INPUT);
+
     if (mode === 'audio') {
-      Speech.speak("Audio mode selected. Please speak your email address.");
-      // Start audio transcription flow
+      Speech.speak("Audio mode selected. Please speak your full name.");
+      startListeningFlow("temp_user", (transcribedName) => {
+        setName(transcribedName);
+      });
+    } else if (mode === 'braille') {
+      Speech.speak("Braille mode selected. Use the dot grid to enter your full name.");
+    } else {
+      Speech.speak("Keyboard mode selected. Tap the input field to type your full name.");
+    }
+  };
+
+  // Move to email input step after name is done
+  const proceedToEmail = () => {
+    if (!name || name.length < 2) {
+      Speech.speak("Please enter a valid name first.");
+      return;
+    }
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setView(VIEW.EMAIL_INPUT);
+
+    if (inputMode === 'audio') {
+      Speech.speak("Name received. Now please speak your email address.");
       startListeningFlow("temp_user", (transcribedEmail) => {
         setEmail(transcribedEmail);
       });
-    } else if (mode === 'braille') {
-      Speech.speak("Braille mode selected. Use the dot grid to enter your email.");
+    } else if (inputMode === 'braille') {
+      Speech.speak("Name received. Now use the dot grid to enter your email address.");
     } else {
-      Speech.speak("Keyboard mode selected. Tap the input field to type your email.");
+      Speech.speak("Name received. Now tap the input field to type your email address.");
+      setTimeout(() => emailInputRef.current?.focus(), 500);
+    }
+  };
+
+  // Move to password input step after email is done
+  const proceedToPassword = () => {
+    if (!email || email.length < 3) {
+      Speech.speak("Please enter a valid email address first.");
+      return;
+    }
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setView(VIEW.PASSWORD_INPUT);
+
+    if (inputMode === 'audio') {
+      Speech.speak("Email received. Now please speak your desired password.");
+      startListeningFlow("temp_user", (transcribedPassword) => {
+        setPassword(transcribedPassword);
+      });
+    } else if (inputMode === 'braille') {
+      Speech.speak("Email received. Now use the dot grid to enter your password.");
+    } else {
+      Speech.speak("Email received. Now tap the input field to type your password.");
+      setTimeout(() => passwordInputRef.current?.focus(), 500);
     }
   };
 
@@ -52,25 +110,36 @@ export default function RegisterScreen({ navigation }) {
     Speech.speak("Returning to mode selection.");
   };
 
+  // Go back to previous step
+  const goBackToEmail = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setView(VIEW.EMAIL_INPUT);
+    Speech.speak("Going back to email input.");
+  };
+
+  const goBackToEmail = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setView(VIEW.NAME_INPUT);
+    Speech.speak("Going back to name input.");
+  };
+
   // Finalize registration with biometrics
   const handleFinalize = async () => {
-    if (!email || email.length < 3) {
-      Speech.speak("Please enter a valid email address.");
+    if (!password || password.length < 3) {
+      Speech.speak("Please enter a valid password, at least 3 characters.");
       return;
     }
 
     Speech.speak("Place your finger on the scanner to secure your account.");
-    const result = await LocalAuthentication.authenticateAsync({ 
-      promptMessage: 'Secure Account' 
+    const result = await LocalAuthentication.authenticateAsync({
+      promptMessage: 'Secure Account'
     });
-    
+
     if (result.success) {
       setLoading(true);
       try {
-        await signUpPasswordless(email, "New User", inputMode);
-        Speech.speak("Account secured. Welcome to EyeDentify.");
-        // No manual navigation needed! 
-        // AuthContext will update 'user', and App.js will auto-switch to Chat.
+        await signUpPasswordless(email, password, inputMode, name);
+        Speech.speak(`Account secured. Welcome to EyeDentify, ${name}.`);
       } catch (error) {
         console.error('Registration error:', error);
         Speech.speak("Registration failed. Please try again.");
@@ -90,18 +159,23 @@ export default function RegisterScreen({ navigation }) {
   const swipeDown = Gesture.Fling()
     .direction(Directions.DOWN)
     .onEnd(() => {
-      // Use navigate instead of replace to avoid navigation errors
       navigation.navigate('Login');
       Speech.speak("Switching to Login.");
     })
     .runOnJS(true);
 
-  // Swipe left to return to mode selection (available in EMAIL_INPUT view)
+  // Swipe left to go back (available in input views)
   const swipeLeft = Gesture.Fling()
     .direction(Directions.LEFT)
     .onEnd(() => {
-      if (view === VIEW.EMAIL_INPUT) {
+      if (view === VIEW.NAME_INPUT) {
         returnToModePicker();
+      } else if (view === VIEW.EMAIL_INPUT) {
+        setView(VIEW.NAME_INPUT);
+        Speech.speak("Going back to name input.");
+      } else if (view === VIEW.PASSWORD_INPUT) {
+        setView(VIEW.EMAIL_INPUT);
+        Speech.speak("Going back to email input.");
       }
     })
     .runOnJS(true);
@@ -110,43 +184,114 @@ export default function RegisterScreen({ navigation }) {
   const tap1 = Gesture.Tap()
     .numberOfTaps(1)
     .onEnd(() => {
-      if (view === VIEW.MODE_PICKER) {
-        selectMode('audio');
-      }
+      if (view === VIEW.MODE_PICKER) selectMode('audio');
     })
     .runOnJS(true);
 
   const tap2 = Gesture.Tap()
     .numberOfTaps(2)
     .onEnd(() => {
-      if (view === VIEW.MODE_PICKER) {
-        selectMode('braille');
-      }
+      if (view === VIEW.MODE_PICKER) selectMode('braille');
     })
     .runOnJS(true);
 
   const tap3 = Gesture.Tap()
     .numberOfTaps(3)
     .onEnd(() => {
-      if (view === VIEW.MODE_PICKER) {
-        selectMode('normal');
-      }
+      if (view === VIEW.MODE_PICKER) selectMode('normal');
     })
     .runOnJS(true);
 
   // Compose gestures based on current view
   let composedGestures;
   if (view === VIEW.MODE_PICKER) {
-    // In mode picker: allow mode selection taps and swipe down
     composedGestures = Gesture.Exclusive(swipeDown, tap3, tap2, tap1);
-  } else if (view === VIEW.EMAIL_INPUT) {
-    // In email input: allow swipe left to return, swipe down to login
-    // Note: tap gestures are disabled in this view to prevent interference with input fields
+  } else if ([VIEW.NAME_INPUT, VIEW.EMAIL_INPUT, VIEW.PASSWORD_INPUT].includes(view)) {
     composedGestures = Gesture.Exclusive(swipeDown, swipeLeft);
   } else {
-    // Fallback
     composedGestures = Gesture.Exclusive(swipeDown);
   }
+
+  // ============================================================
+  // RENDER HELPERS
+  // ============================================================
+
+  // Renders the appropriate input component based on current mode
+  const renderInputField = (fieldValue, fieldType, inputRef) => {
+    if (inputMode === 'braille') {
+      const setters = {
+        email: (val) => setEmail(prev => prev + val),
+        name: (val) => setName(prev => prev + val),
+        password: (val) => setPassword(prev => prev + val),
+      };
+      const deleters = {
+        email: () => setEmail(prev => prev.slice(0, -1)),
+        name: () => setName(prev => prev.slice(0, -1)),
+        password: () => setPassword(prev => prev.slice(0, -1)),
+      };
+      return (
+        <BrailleInput
+          onCharSubmit={setters[fieldType]}
+          onDeleteChar={deleters[fieldType]}
+        />
+      );
+    }
+
+    if (inputMode === 'normal') {
+      const labels = {
+        email: 'Email input field',
+        name: 'Name input field',
+        password: 'Password input field',
+      };
+      const hints = {
+        email: 'Type your email address',
+        name: 'Type your full name',
+        password: 'Type your password',
+      };
+      const placeholders = {
+        email: 'your@email.com',
+        name: 'Your full name',
+        password: 'Your password',
+      };
+      const keyboardTypes = {
+        email: 'email-address',
+        name: 'default',
+        password: 'default',
+      };
+      const isSecure = fieldType === 'password';
+
+      return (
+        <TextInput
+          ref={inputRef}
+          style={styles.textInput}
+          value={fieldValue}
+          onChangeText={fieldType === 'email' ? setEmail : fieldType === 'name' ? setName : setPassword}
+          placeholder={placeholders[fieldType]}
+          placeholderTextColor="#888"
+          keyboardType={keyboardTypes[fieldType]}
+          autoCapitalize={fieldType === 'email' ? 'none' : 'words'}
+          autoFocus={true}
+          secureTextEntry={isSecure}
+          accessible={true}
+          accessibilityLabel={labels[fieldType]}
+          accessibilityHint={hints[fieldType]}
+          onFocus={() => speakOnFocus(`${labels[fieldType]}. ${hints[fieldType]}`)}
+        />
+      );
+    }
+
+    // Audio mode - show transcription status
+    const values = { email, name, password };
+
+    return (
+      <View style={styles.audioStatus}>
+        <Text style={styles.audioStatusText}>
+          {values[fieldType] ? `Heard: ${values[fieldType]}` : `Listening for your ${fieldType}...`}
+        </Text>
+        <ActivityIndicator size="small" color="#6C63FF" style={styles.audioSpinner} />
+      </View>
+    );
+  };
 
   // ============================================================
   // RENDER
@@ -155,7 +300,14 @@ export default function RegisterScreen({ navigation }) {
   return (
     <GestureDetector gesture={composedGestures}>
       <View style={styles.container}>
-        <Text style={styles.title}>REGISTER</Text>
+        <Text
+          style={styles.title}
+          accessible={true}
+          accessibilityLabel="Register screen"
+          accessibilityRole="header"
+        >
+          REGISTER
+        </Text>
 
         {/* Mode Picker View */}
         {view === VIEW.MODE_PICKER && (
@@ -167,28 +319,31 @@ export default function RegisterScreen({ navigation }) {
               style={[styles.modeButton, styles.audioButton]}
               onPress={() => selectMode('audio')}
               accessible={true}
-              accessibilityLabel="Audio mode"
-              accessibilityHint="Tap once to select audio input mode"
+              accessibilityLabel="Audio input mode"
+              accessibilityHint="Tap once or press Enter to select voice input"
+              onFocus={() => speakOnFocus('Audio mode button. Tap once to select audio input mode.')}
             >
               <Text style={styles.modeButtonText}>1: AUDIO</Text>
             </TouchableOpacity>
-            
+
             <TouchableOpacity
               style={[styles.modeButton, styles.brailleButton]}
               onPress={() => selectMode('braille')}
               accessible={true}
-              accessibilityLabel="Braille mode"
-              accessibilityHint="Tap twice to select braille input mode"
+              accessibilityLabel="Braille input mode"
+              accessibilityHint="Tap twice or press Enter to select braille dot grid input"
+              onFocus={() => speakOnFocus('Braille mode button. Tap twice to select braille input mode.')}
             >
               <Text style={styles.modeButtonText}>2: BRAILLE</Text>
             </TouchableOpacity>
-            
+
             <TouchableOpacity
               style={[styles.modeButton, styles.keyboardButton]}
               onPress={() => selectMode('normal')}
               accessible={true}
-              accessibilityLabel="Keyboard mode"
-              accessibilityHint="Tap three times to select keyboard input mode"
+              accessibilityLabel="Keyboard input mode"
+              accessibilityHint="Tap three times or press Enter to select keyboard typing"
+              onFocus={() => speakOnFocus('Keyboard mode button. Tap three times to select keyboard input mode.')}
             >
               <Text style={styles.modeButtonText}>3: KEYBOARD</Text>
             </TouchableOpacity>
@@ -200,72 +355,148 @@ export default function RegisterScreen({ navigation }) {
           </View>
         )}
 
-        {/* Email Input View */}
-        {view === VIEW.EMAIL_INPUT && (
+        {/* Name Input View — STEP 1 */}
+        {view === VIEW.NAME_INPUT && (
           <View style={styles.inputArea}>
-            <Text style={styles.label}>Enter your email:</Text>
-            
-            {/* Display current mode */}
+            <Text style={styles.label}>Step 1 of 3 - Full Name:</Text>
             <Text style={styles.modeIndicator}>
               Mode: {inputMode?.toUpperCase() || 'Not selected'}
             </Text>
 
-            {/* Input based on mode */}
-            {inputMode === 'braille' ? (
-              <BrailleInput
-                onCharSubmit={(char) => setEmail(prev => prev + char)}
-                onDeleteChar={() => setEmail(prev => prev.slice(0, -1))}
-              />
-            ) : inputMode === 'normal' ? (
-              <TextInput
-                style={styles.textInput}
-                value={email}
-                onChangeText={setEmail}
-                placeholder="your@email.com"
-                placeholderTextColor="#888"
-                keyboardType="email-address"
-                autoCapitalize="none"
-                autoFocus={true}
-                accessible={true}
-                accessibilityLabel="Email input field"
-                accessibilityHint="Type your email address"
-              />
-            ) : (
-              // Audio mode - show transcription status
-              <View style={styles.audioStatus}>
-                <Text style={styles.audioStatusText}>
-                  {email ? `Heard: ${email}` : "Listening for your email..."}
-                </Text>
-                <ActivityIndicator size="small" color="#6C63FF" style={styles.audioSpinner} />
-              </View>
+            {renderInputField(name, 'name', nameInputRef)}
+
+            {name.length > 0 && (
+              <Text style={styles.emailPreview}>Name: {name}</Text>
             )}
 
-            {/* Email display */}
-            {email.length > 0 && (
-              <Text style={styles.emailPreview}>
-                Email: {email}
-              </Text>
-            )}
-
-            {/* Action buttons */}
             <View style={styles.buttonRow}>
               <TouchableOpacity
                 style={[styles.actionButton, styles.backButton]}
                 onPress={returnToModePicker}
                 accessible={true}
-                accessibilityLabel="Back to mode selection"
-                accessibilityHint="Swipe left or tap to return to mode selection"
+                accessibilityLabel="Back button"
+                accessibilityHint="Returns to input method selection"
+                onFocus={() => speakOnFocus('Back button. Returns to mode selection.')}
               >
                 <Text style={styles.actionButtonText}>← Back</Text>
               </TouchableOpacity>
-              
+
+              <TouchableOpacity
+                style={[styles.actionButton, styles.submitButton, (!name || name.length < 2) && styles.disabledButton]}
+                onPress={proceedToEmail}
+                disabled={!name || name.length < 2}
+                accessible={true}
+                accessibilityLabel="Next button"
+                accessibilityHint="Proceeds to email input"
+                onFocus={() => speakOnFocus('Next button. Proceeds to email input.')}
+              >
+                <Text style={styles.actionButtonText}>Next →</Text>
+              </TouchableOpacity>
+            </View>
+
+            <Text style={styles.gestureHint}>
+              Swipe left to go back{'\n'}
+              Swipe down to go to Login
+            </Text>
+          </View>
+        )}
+
+        {/* Email Input View — STEP 2 */}
+        {view === VIEW.EMAIL_INPUT && (
+          <View style={styles.inputArea}>
+            <Text style={styles.label}>Step 2 of 3 - Email:</Text>
+            <Text style={styles.modeIndicator}>
+              Mode: {inputMode?.toUpperCase() || 'Not selected'}
+            </Text>
+
+            {renderInputField(email, 'email', emailInputRef)}
+
+            {/* Speak email button — audio/braille ONLY, never shown in keyboard mode */}
+            {inputMode !== 'normal' && (
+              <TouchableOpacity
+                style={styles.speakButton}
+                onPress={() => {
+                  Speech.speak(email || 'No email entered yet.');
+                }}
+                accessible={true}
+                accessibilityLabel="Speak email button"
+                accessibilityHint="Tap to hear your email address read aloud"
+                onFocus={() => speakOnFocus('Speak email button. Tap to hear your email address read aloud.')}
+              >
+                <Text style={styles.speakButtonText}>🔊 Hear Email</Text>
+              </TouchableOpacity>
+            )}
+
+            {email.length > 0 && (
+              <Text style={styles.emailPreview}>Email: {email}</Text>
+            )}
+
+            <View style={styles.buttonRow}>
+              <TouchableOpacity
+                style={[styles.actionButton, styles.backButton]}
+                onPress={() => { setView(VIEW.NAME_INPUT); Speech.speak("Going back to name input."); }}
+                accessible={true}
+                accessibilityLabel="Back button"
+                accessibilityHint="Returns to name input"
+                onFocus={() => speakOnFocus('Back button. Returns to name input.')}
+              >
+                <Text style={styles.actionButtonText}>← Back</Text>
+              </TouchableOpacity>
+
               <TouchableOpacity
                 style={[styles.actionButton, styles.submitButton, (!email || email.length < 3) && styles.disabledButton]}
+                onPress={proceedToPassword}
+                disabled={!email || email.length < 3}
+                accessible={true}
+                accessibilityLabel="Next button"
+                accessibilityHint="Proceeds to password input"
+                onFocus={() => speakOnFocus('Next button. Proceeds to password input.')}
+              >
+                <Text style={styles.actionButtonText}>Next →</Text>
+              </TouchableOpacity>
+            </View>
+
+            <Text style={styles.gestureHint}>
+              Swipe left to go back{'\n'}
+              Swipe down to go to Login
+            </Text>
+          </View>
+        )}
+
+        {/* Password Input View */}
+        {view === VIEW.PASSWORD_INPUT && (
+          <View style={styles.inputArea}>
+            <Text style={styles.label}>Step 3 of 3 - Password:</Text>
+            <Text style={styles.modeIndicator}>
+              Mode: {inputMode?.toUpperCase() || 'Not selected'}
+            </Text>
+
+            {renderInputField(password, 'password', passwordInputRef)}
+
+            {password.length > 0 && (
+              <Text style={styles.emailPreview}>Password: {'*'.repeat(password.length)}</Text>
+            )}
+
+            <View style={styles.buttonRow}>
+              <TouchableOpacity
+                style={[styles.actionButton, styles.backButton]}
+                onPress={goBackToEmail}
+                accessible={true}
+                accessibilityLabel="Back button"
+                accessibilityHint="Returns to email input"
+                onFocus={() => speakOnFocus('Back button. Returns to email input.')}
+              >
+                <Text style={styles.actionButtonText}>← Back</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.actionButton, styles.submitButton, (!password || password.length < 3) && styles.disabledButton]}
                 onPress={handleFinalize}
-                disabled={!email || email.length < 3 || loading}
+                disabled={!password || password.length < 3 || loading}
                 accessible={true}
                 accessibilityLabel="Secure account with fingerprint"
                 accessibilityHint="Tap to scan fingerprint and complete registration"
+                onFocus={() => speakOnFocus('Scan Fingerprint button. Tap to scan fingerprint and complete registration.')}
               >
                 {loading ? (
                   <ActivityIndicator color="#FFF" size="small" />
@@ -276,7 +507,7 @@ export default function RegisterScreen({ navigation }) {
             </View>
 
             <Text style={styles.gestureHint}>
-              Swipe left to return to mode selection{'\n'}
+              Swipe left to go back{'\n'}
               Swipe down to go to Login
             </Text>
           </View>
@@ -441,6 +672,22 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 16,
     fontWeight: 'bold',
+  },
+  speakButton: {
+    width: '100%',
+    height: 44,
+    backgroundColor: 'rgba(108, 99, 255, 0.15)',
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: '#6C63FF',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  speakButtonText: {
+    color: '#6C63FF',
+    fontSize: 15,
+    fontWeight: '600',
   },
   gestureHint: {
     color: '#666',

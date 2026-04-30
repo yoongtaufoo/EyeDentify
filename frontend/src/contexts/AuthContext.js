@@ -486,10 +486,9 @@
 
 // ##################################
 
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+impimport React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import * as Speech from 'expo-speech';
-import * as SecureStore from 'expo-secure-store';
-import AsyncStorage from '@react-native-async-storage/async-storage'; // New Import
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from '../lib/supabaseClient';
 import { signup as apiSignup } from '../services/apiService';
 
@@ -503,7 +502,6 @@ export function AuthProvider({ children }) {
   useEffect(() => {
     const init = async () => {
       const { data: { session } } = await supabase.auth.getSession();
-      // Use AsyncStorage for the mode
       const savedMode = await AsyncStorage.getItem('input_mode');
       if (savedMode) setInputMode(savedMode);
       setUser(session?.user ?? null);
@@ -520,132 +518,70 @@ export function AuthProvider({ children }) {
     return () => subscription.unsubscribe();
   }, []);
 
-  // const signUpPasswordless = useCallback(async (email, fullName, keyboardType) => {
-  //   // Generate a secure hidden password
-  //   const hiddenPw = `ID-${Math.random().toString(36).slice(-10)}!A1`;
-
-  //   const { data, error } = await supabase.auth.signUp({
-  //     email,
-  //     password: hiddenPw,
-  //     options: { data: { full_name: fullName, keyboard_type: keyboardType } },
-  //   });
-
-  //   if (error) throw error;
-
-  //   // --- HYBRID STORAGE LOGIC ---
-  //   // 1. Non-sensitive info goes to AsyncStorage (Large limit)
-  //   await AsyncStorage.setItem('saved_email', email);
-  //   await AsyncStorage.setItem('input_mode', keyboardType);
-
-  //   // 2. ONLY the secret password goes to SecureStore (Small limit, high security)
-  //   await SecureStore.setItemAsync('hidden_pw', hiddenPw);
-    
-  //   return data;
-  // }, []);
-
-  // src/contexts/AuthContext.js
-
-const signUpPasswordless = useCallback(async (email, fullName, keyboardType) => {
-    const hiddenPw = `ID-${Math.random().toString(36).slice(-10)}!A1`;
+  // Register with REAL user password — no hidden password generation
+  const signUpPasswordless = useCallback(async (email, userPassword, inputMode, displayName = 'New User') => {
+    // Use the user's REAL password directly
+    const password = userPassword;
 
     const { data, error } = await supabase.auth.signUp({
       email,
-      password: hiddenPw,
-      options: { data: { full_name: fullName, keyboard_type: keyboardType } },
+      password: password,
+      options: { data: { full_name: displayName, keyboard_type: inputMode } },
     });
 
-    // CHECK FOR THE "ALREADY REGISTERED" ERROR
     if (error) {
-      if (error.message.includes("User already registered")) {
-        console.log("LOG: User exists in Auth, but not in DB. Manual cleanup needed or switch to Login.");
-        Speech.speak("This email is already registered. Please login or use a different email.");
+      if (error.message.includes("User already registered") || error.message.includes("already been registered")) {
+        Speech.speak("This email is already registered. Please login instead.");
+      } else {
+        Speech.speak(`Sign up failed: ${error.message}`);
       }
       throw error;
     }
 
-    // --- HYBRID STORAGE LOGIC ---
-    // 1. Non-sensitive info goes to AsyncStorage (Large limit)
+    // Only save non-sensitive data (NO password stored locally)
     await AsyncStorage.setItem('saved_email', email);
-    await AsyncStorage.setItem('input_mode', keyboardType);
+    await AsyncStorage.setItem('input_mode', inputMode);
 
-    // 2. ONLY the secret password goes to SecureStore (Small limit, high security)
-    await SecureStore.setItemAsync('hidden_pw', hiddenPw);
-    
-    // 3. CALL BACKEND TO CREATE PROFILE IN DATABASE
+    // Sync with backend to create DB profile (stores real password in DB)
     try {
-      await apiSignup(email, hiddenPw, fullName, keyboardType);
+      await apiSignup(email, password, displayName, inputMode);
       console.log('Backend profile creation initiated');
     } catch (e) {
       console.log('Profile sync note:', e.message || JSON.stringify(e));
-      // Don't throw - allow registration to succeed even if backend fails
     }
-    
+
+    Speech.speak('Account created successfully. Welcome to EyeDentify.');
     return data;
   }, []);
 
+  // Login with email + REAL password (compared against Supabase Auth / DB)
   const signIn = useCallback(async (email, password) => {
     const { data, error } = await supabase.auth.signInWithPassword({ email, password });
-    
-    if (error) {
-        // If Supabase returns an error, it might say "Invalid login credentials"
-        // which your code might be translating to "Account not found"
-        Speech.speak("Identity verification failed.");
-        throw error;
-      }
-      // Update user state immediately
-      setUser(data.user);
-      return data;
-  }, []);
 
-  // const signIn = useCallback(async (email, password) => {
-  //   const { data, error } = await supabase.auth.signInWithPassword({ email, password });
-  //   if (error) throw error;
-  //   return data;
-  // }, []);
+    if (error) {
+      Speech.speak("Login failed. Please check your email and password.");
+      throw error;
+    }
+    setUser(data.user);
+    return data;
+  }, []);
 
   const signOut = useCallback(async () => {
     try {
-      // 1. End the Supabase session
       await supabase.auth.signOut();
 
-      // 2. Clear non-sensitive identifying info
+      // Clear all local data (no password was ever stored)
       await AsyncStorage.removeItem('saved_email');
-      await SecureStore.deleteItemAsync('saved_email');
-      // await SecureStore.deleteItemAsync('hidden_pw');
-      await AsyncStorage.removeItem('full_name');
       await AsyncStorage.removeItem('input_mode');
 
-      // 3. IMPORTANT: We keep 'hidden_pw' in SecureStore 
-      // so they don't have to create a brand new account.
-
       setUser(null);
-      setInputMode(null); // Reset the context state
-      Speech.speak("Logged out and cleared identity info.");
+      setInputMode(null);
+      Speech.speak("Logged out successfully.");
     } catch (error) {
       console.error("Logout Error:", error);
     }
   }, []);
 
-  // const signOut = useCallback(async () => {
-  //   try {
-  //     // 1. Tell Supabase to kill the session
-  //     await supabase.auth.signOut();
-      
-  //     // 2. Clear your "Idea B" credentials
-  //     // await SecureStore.deleteItemAsync('hidden_pw');
-  //     await AsyncStorage.removeItem('saved_email');
-  //     await AsyncStorage.removeItem('full_name');
-      
-  //     // 3. Reset the local state to trigger the Navigator to switch to Login
-  //     setUser(null);
-      
-  //     Speech.speak("Signed out. Returning to login.");
-  //   } catch (error) {
-  //     console.error("Sign out error:", error);
-  //   }
-  // }, []);
-
-  // DON'T FORGET to add signOut to your 'value' object at the bottom!
   const value = {
     user,
     loading,
@@ -655,16 +591,6 @@ const signUpPasswordless = useCallback(async (email, fullName, keyboardType) => 
     signIn,
     signOut,
   };
-  
-
-  // const value = {
-  //   user,
-  //   loading,
-  //   inputMode,
-  //   setInputMode,
-  //   signUpPasswordless,
-  //   signIn,
-  // };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

@@ -1,81 +1,50 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { View, Text, StyleSheet, TextInput, TouchableOpacity, ActivityIndicator } from 'react-native';
 import { GestureDetector, Gesture, Directions } from 'react-native-gesture-handler';
 import * as Speech from 'expo-speech';
 import * as Haptics from 'expo-haptics';
-import * as SecureStore from 'expo-secure-store';
-import * as LocalAuthentication from 'expo-local-authentication';
 import { useAuth } from '../contexts/AuthContext';
 import BrailleInput from '../components/BrailleInput';
 import { startListeningFlow } from '../utils/audioHandler';
+
+// Accessibility helper: speaks when an element receives focus
+const speakOnFocus = (message) => {
+  Speech.stop();
+  setTimeout(() => Speech.speak(message), 100);
+};
 
 // View modes
 const VIEW = {
   CHECKING: 'CHECKING',
   MODE_PICKER: 'MODE_PICKER',
   EMAIL_INPUT: 'EMAIL_INPUT',
+  PASSWORD_INPUT: 'PASSWORD_INPUT',
 };
 
 export default function LoginScreen({ navigation }) {
   const { signIn, inputMode, setInputMode } = useAuth();
   const [view, setView] = useState(VIEW.CHECKING);
   const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
+  const emailInputRef = useRef(null);
+  const passwordInputRef = useRef(null);
 
-  // const manualWipe = async () => {
-  //   await SecureStore.deleteItemAsync('hidden_pw');
-  //   await SecureStore.deleteItemAsync('saved_email'); // If you still have it here
-  //   await AsyncStorage.clear();
-  //   console.log("✅ Manual Wipe Complete. Remove this code now!");
-  // };
-  
-  // Call it once
-  
-  // Initial check for saved account
+  // Initial check for saved account (email only — no stored password)
   useEffect(() => {
-    // manualWipe();
     checkAccount();
   }, []);
 
   const checkAccount = async () => {
-    const savedEmail = await SecureStore.getItemAsync('saved_email');
+    const { AsyncStorage } = await import('@react-native-async-storage/async-storage');
+    const savedEmail = await AsyncStorage.getItem('saved_email');
     if (savedEmail) {
-      Speech.speak("Welcome back. Place your finger on the scanner. Swipe down for Registration.");
-      handleBioLogin(savedEmail);
+      setEmail(savedEmail);
+      Speech.speak("Welcome back. Enter your password to login.");
+      setView(VIEW.PASSWORD_INPUT);
     } else {
       setView(VIEW.MODE_PICKER);
       Speech.speak("No account found. Tap once for Audio, twice for Braille, three times for Keyboard. Swipe down for Registration.");
-    }
-  };
-
-  const handleBioLogin = async (targetEmail) => {
-    const pw = await SecureStore.getItemAsync('hidden_pw');
-    
-    if (!pw) {
-      Speech.speak("Account credentials missing. Please register again.");
-      setView(VIEW.MODE_PICKER);
-      return;
-    }
-
-    const result = await LocalAuthentication.authenticateAsync({ 
-      promptMessage: 'Login to EyeDentify' 
-    });
-
-    if (result.success) {
-      setLoading(true);
-      try { 
-        await signIn(targetEmail, pw); 
-        Speech.speak("Login successful.");
-      } catch (error) { 
-        console.error("Sign in error:", error);
-        Speech.speak("Login failed. Check your connection."); 
-        setView(VIEW.MODE_PICKER);
-      } finally { 
-        setLoading(false); 
-      }
-    } else {
-      Speech.speak("Authentication cancelled.");
-      setView(VIEW.MODE_PICKER);
     }
   };
 
@@ -84,10 +53,9 @@ export default function LoginScreen({ navigation }) {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     setInputMode(mode);
     setView(VIEW.EMAIL_INPUT);
-    
+
     if (mode === 'audio') {
       Speech.speak("Audio mode selected. Please speak your email address.");
-      // Start audio transcription flow
       startListeningFlow("temp_user", (transcribedEmail) => {
         setEmail(transcribedEmail);
       });
@@ -103,66 +71,61 @@ export default function LoginScreen({ navigation }) {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     setView(VIEW.MODE_PICKER);
     setEmail('');
+    setPassword('');
     Speech.speak("Returning to mode selection.");
   };
 
-  // Handle manual login with email
-  const handleManualLogin = async () => {
+  // Proceed to password input after email is entered
+  const proceedToPassword = () => {
+    if (!email || email.length < 3) {
+      Speech.speak("Please enter a valid email address first.");
+      return;
+    }
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setView(VIEW.PASSWORD_INPUT);
+
+    if (inputMode === 'audio') {
+      Speech.speak("Email received. Now please speak your password.");
+      startListeningFlow("temp_user", (transcribedPassword) => {
+        setPassword(transcribedPassword);
+      });
+    } else if (inputMode === 'braille') {
+      Speech.speak("Email received. Now use the dot grid to enter your password.");
+    } else {
+      Speech.speak("Email received. Now tap the input field to type your password.");
+      setTimeout(() => passwordInputRef.current?.focus(), 500);
+    }
+  };
+
+  // Handle login with entered email + REAL password
+  const handleLogin = async () => {
     if (!email || email.length < 3) {
       Speech.speak("Please enter a valid email address.");
       return;
     }
-
-    // For demo purposes, we'll try biometrics first
-    Speech.speak("Place your finger on the scanner to login.");
-    const result = await LocalAuthentication.authenticateAsync({ 
-      promptMessage: 'Login to EyeDentify' 
-    });
-
-    // if (result.success) {
-    //   setLoading(true);
-    //   try {
-    //     // Try to find password for this email
-    //     const savedEmail = await SecureStore.getItemAsync('saved_email');
-    //     const pw = await SecureStore.getItemAsync('hidden_pw');
-        
-    //     if (savedEmail === email && pw) {
-    //       await signIn(email, pw);
-    //       Speech.speak("Login successful.");
-    //     } else {
-    //       Speech.speak("Account not found. Please register first.");
-    //       setView(VIEW.MODE_PICKER);
-    //     }
-    //   } catch (error) {
-    //     console.error('Login error:', error);
-    //     Speech.speak("Login failed. Please try again.");
-    //   } finally {
-    //     setLoading(false);
-    //   }
-    // } else {
-    //   Speech.speak("Authentication cancelled.");
-    // }
-    if (result.success) {
-      setLoading(true);
-      try {
-        // Grab the hidden key. It should still be there if logout didn't delete it!
-        const pw = await SecureStore.getItemAsync('hidden_pw');
-        
-        if (pw) {
-          // If we have the key, we don't care if the email was 'saved' before.
-          // We just try to log in with the current email and the stored key.
-          await signIn(email, pw);
-          Speech.speak("Login successful.");
-        } else {
-          // This only happens if they've never registered on THIS specific phone.
-          Speech.speak("Account key not found on this device. Please register.");
-        }
-      } catch (error) {
-        Speech.speak("Login failed. Check your connection.");
-      } finally {
-        setLoading(false);
-      }
+    if (!password || password.length < 3) {
+      Speech.speak("Please enter your password, at least 3 characters.");
+      return;
     }
+
+    setLoading(true);
+    try {
+      await signIn(email, password);
+      Speech.speak("Login successful.");
+    } catch (error) {
+      console.error("Sign in error:", error);
+      // Stay on current screen so user can retry
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Go back to email input
+  const goBackToEmail = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setView(VIEW.EMAIL_INPUT);
+    setPassword('');
+    Speech.speak("Going back to email input.");
   };
 
   // ============================================================
@@ -173,18 +136,19 @@ export default function LoginScreen({ navigation }) {
   const swipeDown = Gesture.Fling()
     .direction(Directions.DOWN)
     .onEnd(() => {
-      // Use navigate instead of replace to avoid navigation errors
       navigation.navigate('Register');
       Speech.speak("Switching to Registration.");
     })
     .runOnJS(true);
 
-  // Swipe left to return to mode selection (available in EMAIL_INPUT view)
+  // Swipe left to go back (available in input views)
   const swipeLeft = Gesture.Fling()
     .direction(Directions.LEFT)
     .onEnd(() => {
       if (view === VIEW.EMAIL_INPUT) {
         returnToModePicker();
+      } else if (view === VIEW.PASSWORD_INPUT) {
+        goBackToEmail();
       }
     })
     .runOnJS(true);
@@ -193,46 +157,108 @@ export default function LoginScreen({ navigation }) {
   const tap1 = Gesture.Tap()
     .numberOfTaps(1)
     .onEnd(() => {
-      if (view === VIEW.MODE_PICKER) {
-        selectMode('audio');
-      }
+      if (view === VIEW.MODE_PICKER) selectMode('audio');
     })
     .runOnJS(true);
 
   const tap2 = Gesture.Tap()
     .numberOfTaps(2)
     .onEnd(() => {
-      if (view === VIEW.MODE_PICKER) {
-        selectMode('braille');
-      }
+      if (view === VIEW.MODE_PICKER) selectMode('braille');
     })
     .runOnJS(true);
 
   const tap3 = Gesture.Tap()
     .numberOfTaps(3)
     .onEnd(() => {
-      if (view === VIEW.MODE_PICKER) {
-        selectMode('normal');
-      }
+      if (view === VIEW.MODE_PICKER) selectMode('normal');
     })
     .runOnJS(true);
 
   // Compose gestures based on current view
   let composedGestures;
   if (view === VIEW.CHECKING) {
-    // Checking biometrics - only allow swipe down
     composedGestures = Gesture.Exclusive(swipeDown);
   } else if (view === VIEW.MODE_PICKER) {
-    // In mode picker: allow mode selection taps and swipe down
     composedGestures = Gesture.Exclusive(swipeDown, tap3, tap2, tap1);
-  } else if (view === VIEW.EMAIL_INPUT) {
-    // In email input: allow swipe left to return, swipe down to register
-    // Note: tap gestures are disabled in this view to prevent interference with input fields
+  } else if (view === VIEW.EMAIL_INPUT || view === VIEW.PASSWORD_INPUT) {
     composedGestures = Gesture.Exclusive(swipeDown, swipeLeft);
   } else {
-    // Fallback
     composedGestures = Gesture.Exclusive(swipeDown);
   }
+
+  // ============================================================
+  // RENDER HELPERS
+  // ============================================================
+
+  // Render appropriate input field based on current mode and field type
+  const renderInputField = (fieldValue, fieldType, inputRef) => {
+    if (inputMode === 'braille') {
+      const setters = {
+        email: (val) => setEmail(prev => prev + val),
+        password: (val) => setPassword(prev => prev + val),
+      };
+      const deleters = {
+        email: () => setEmail(prev => prev.slice(0, -1)),
+        password: () => setPassword(prev => prev.slice(0, -1)),
+      };
+      return (
+        <BrailleInput
+          onCharSubmit={setters[fieldType]}
+          onDeleteChar={deleters[fieldType]}
+        />
+      );
+    }
+
+    if (inputMode === 'normal') {
+      const labels = {
+        email: 'Email input field',
+        password: 'Password input field',
+      };
+      const hints = {
+        email: 'Type your email address',
+        password: 'Type your password',
+      };
+      const placeholders = {
+        email: 'your@email.com',
+        password: 'Your password',
+      };
+      const keyboardTypes = {
+        email: 'email-address',
+        password: 'default',
+      };
+
+      return (
+        <TextInput
+          ref={inputRef}
+          style={styles.textInput}
+          value={fieldValue}
+          onChangeText={fieldType === 'email' ? setEmail : setPassword}
+          placeholder={placeholders[fieldType]}
+          placeholderTextColor="#888"
+          keyboardType={keyboardTypes[fieldType]}
+          autoCapitalize={fieldType === 'email' ? 'none' : 'none'}
+          autoFocus={true}
+          secureTextEntry={fieldType === 'password'}
+          accessible={true}
+          accessibilityLabel={labels[fieldType]}
+          accessibilityHint={hints[fieldType]}
+          onFocus={() => speakOnFocus(`${labels[fieldType]}. ${hints[fieldType]}`)}
+        />
+      );
+    }
+
+    // Audio mode - show transcription status
+    const values = { email, password };
+    return (
+      <View style={styles.audioStatus}>
+        <Text style={styles.audioStatusText}>
+          {values[fieldType] ? `Heard: ${values[fieldType]}` : `Listening for your ${fieldType}...`}
+        </Text>
+        <ActivityIndicator size="small" color="#6C63FF" style={styles.audioSpinner} />
+      </View>
+    );
+  };
 
   // ============================================================
   // RENDER
@@ -241,9 +267,16 @@ export default function LoginScreen({ navigation }) {
   return (
     <GestureDetector gesture={composedGestures}>
       <View style={styles.container}>
-        <Text style={styles.title}>EyeDentify</Text>
+        <Text
+          style={styles.title}
+          accessible={true}
+          accessibilityLabel="Login screen"
+          accessibilityRole="header"
+        >
+          EyeDentify
+        </Text>
 
-        {/* Checking biometrics view */}
+        {/* Checking view */}
         {view === VIEW.CHECKING && (
           <View style={styles.checkingView}>
             <ActivityIndicator size="large" color="#6C63FF" />
@@ -263,34 +296,40 @@ export default function LoginScreen({ navigation }) {
               style={[styles.modeButton, styles.audioButton]}
               onPress={() => selectMode('audio')}
               accessible={true}
-              accessibilityLabel="Audio mode"
+              focusable={true}
+              accessibilityLabel="Audio input mode"
               accessibilityHint="Tap once to select audio input mode"
+              onFocus={() => speakOnFocus('Audio mode button. Tap once to select audio input.')}
             >
               <Text style={styles.modeButtonText}>1: AUDIO</Text>
             </TouchableOpacity>
-            
+
             <TouchableOpacity
               style={[styles.modeButton, styles.brailleButton]}
               onPress={() => selectMode('braille')}
               accessible={true}
-              accessibilityLabel="Braille mode"
+              focusable={true}
+              accessibilityLabel="Braille input mode"
               accessibilityHint="Tap twice to select braille input mode"
+              onFocus={() => speakOnFocus('Braille mode button. Tap twice to select braille input.')}
             >
               <Text style={styles.modeButtonText}>2: BRAILLE</Text>
             </TouchableOpacity>
-            
+
             <TouchableOpacity
               style={[styles.modeButton, styles.keyboardButton]}
               onPress={() => selectMode('normal')}
               accessible={true}
-              accessibilityLabel="Keyboard mode"
-              accessibilityHint="Tap three times to select keyboard input mode"
+              focusable={true}
+              accessibilityLabel="Keyboard input mode"
+              accessibilityHint="Tap three times to select keyboard typing"
+              onFocus={() => speakOnFocus('Keyboard mode button. Tap three times to select keyboard input.')}
             >
               <Text style={styles.modeButtonText}>3: KEYBOARD</Text>
             </TouchableOpacity>
 
             <Text style={styles.hint}>
-              Swipe down to go to Register{'\n'}
+              Swipe down to go to Registration{'\n'}
               Selected mode: {inputMode || 'None'}
             </Text>
           </View>
@@ -299,80 +338,136 @@ export default function LoginScreen({ navigation }) {
         {/* Email Input View */}
         {view === VIEW.EMAIL_INPUT && (
           <View style={styles.inputArea}>
-            <Text style={styles.label}>Enter your email:</Text>
-            
-            {/* Display current mode */}
+            <Text style={styles.label}>Step 1 - Email:</Text>
             <Text style={styles.modeIndicator}>
               Mode: {inputMode?.toUpperCase() || 'Not selected'}
             </Text>
 
-            {/* Input based on mode */}
-            {inputMode === 'braille' ? (
-              <BrailleInput
-                onCharSubmit={(char) => setEmail(prev => prev + char)}
-                onDeleteChar={() => setEmail(prev => prev.slice(0, -1))}
-              />
-            ) : inputMode === 'normal' ? (
-              <TextInput
-                style={styles.textInput}
-                value={email}
-                onChangeText={setEmail}
-                placeholder="your@email.com"
-                placeholderTextColor="#888"
-                keyboardType="email-address"
-                autoCapitalize="none"
-                autoFocus={true}
+            {renderInputField(email, 'email', emailInputRef)}
+
+            {/* Speak email button — audio/braille ONLY */}
+            {inputMode !== 'normal' && (
+              <TouchableOpacity
+                style={styles.speakButton}
+                onPress={() => {
+                  Speech.speak(email || 'No email entered yet.');
+                }}
                 accessible={true}
-                accessibilityLabel="Email input field"
-                accessibilityHint="Type your email address"
-              />
-            ) : (
-              // Audio mode - show transcription status
-              <View style={styles.audioStatus}>
-                <Text style={styles.audioStatusText}>
-                  {email ? `Heard: ${email}` : "Listening for your email..."}
-                </Text>
-                <ActivityIndicator size="small" color="#6C63FF" style={styles.audioSpinner} />
-              </View>
+                focusable={true}
+                accessibilityRole="button"
+                accessibilityLabel="Hear Email button"
+                accessibilityHint="Tap to hear your email address read aloud"
+                onFocus={() => speakOnFocus('Hear Email button. Tap to hear your email address read aloud.')}
+              >
+                <Text style={styles.speakButtonText}>Hear Email</Text>
+              </TouchableOpacity>
             )}
 
-            {/* Email display */}
             {email.length > 0 && (
-              <Text style={styles.emailPreview}>
-                Email: {email}
-              </Text>
+              <Text style={styles.previewText}>Email: {email}</Text>
             )}
 
-            {/* Action buttons */}
             <View style={styles.buttonRow}>
               <TouchableOpacity
                 style={[styles.actionButton, styles.backButton]}
                 onPress={returnToModePicker}
                 accessible={true}
-                accessibilityLabel="Back to mode selection"
-                accessibilityHint="Swipe left or tap to return to mode selection"
+                focusable={true}
+                accessibilityRole="button"
+                accessibilityLabel="Back button"
+                accessibilityHint="Returns to mode selection"
+                onFocus={() => speakOnFocus('Back button. Returns to mode selection.')}
               >
                 <Text style={styles.actionButtonText}>← Back</Text>
               </TouchableOpacity>
-              
+
               <TouchableOpacity
                 style={[styles.actionButton, styles.submitButton, (!email || email.length < 3) && styles.disabledButton]}
-                onPress={handleManualLogin}
-                disabled={!email || email.length < 3 || loading}
+                onPress={proceedToPassword}
+                disabled={!email || email.length < 3}
                 accessible={true}
-                accessibilityLabel="Login with fingerprint"
-                accessibilityHint="Tap to scan fingerprint and login"
+                focusable={true}
+                accessibilityRole="button"
+                accessibilityLabel="Next button"
+                accessibilityHint="Proceeds to password input"
+                onFocus={() => speakOnFocus('Next button. Proceeds to password input.')}
+              >
+                <Text style={styles.actionButtonText}>Next →</Text>
+              </TouchableOpacity>
+            </View>
+
+            <Text style={styles.gestureHint}>
+              Swipe left to go back{'\n'}
+              Swipe down to go to Register
+            </Text>
+          </View>
+        )}
+
+        {/* Password Input View */}
+        {view === VIEW.PASSWORD_INPUT && (
+          <View style={styles.inputArea}>
+            <Text style={styles.label}>Step 2 - Password:</Text>
+            <Text style={styles.modeIndicator}>
+              Mode: {inputMode?.toUpperCase() || 'Not selected'}
+            </Text>
+            <Text style={styles.emailPreview}>Email: {email}</Text>
+
+            {renderInputField(password, 'password', passwordInputRef)}
+
+            {/* Speak password hint — audio/braille ONLY */}
+            {inputMode !== 'normal' && (
+              <TouchableOpacity
+                style={styles.speakButton}
+                onPress={() => {
+                  const masked = '*'.repeat(password.length);
+                  Speech.speak(password ? `Password entered: ${masked} characters` : 'No password entered yet.');
+                }}
+                accessible={true}
+                focusable={true}
+                accessibilityRole="button"
+                accessibilityLabel="Password info button"
+                accessibilityHint="Tap to hear how many characters you've entered"
+                onFocus={() => speakOnFocus('Password info button. Tap to hear how many characters you have entered.')}
+              >
+                <Text style={styles.speakButtonText}>{password ? `Password: ${'*'.repeat(password.length)}` : 'No password'}</Text>
+              </TouchableOpacity>
+            )}
+
+            <View style={styles.buttonRow}>
+              <TouchableOpacity
+                style={[styles.actionButton, styles.backButton]}
+                onPress={goBackToEmail}
+                accessible={true}
+                focusable={true}
+                accessibilityRole="button"
+                accessibilityLabel="Back button"
+                accessibilityHint="Returns to email input"
+                onFocus={() => speakOnFocus('Back button. Returns to email input.')}
+              >
+                <Text style={styles.actionButtonText}>← Back</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.actionButton, styles.submitButton, (!password || password.length < 3 || loading) && styles.disabledButton]}
+                onPress={handleLogin}
+                disabled={!password || password.length < 3 || loading}
+                accessible={true}
+                focusable={true}
+                accessibilityRole="button"
+                accessibilityLabel="Login button"
+                accessibilityHint="Tap to login with your email and password"
+                onFocus={() => speakOnFocus('Login button. Tap to login with your email and password.')}
               >
                 {loading ? (
                   <ActivityIndicator color="#FFF" size="small" />
                 ) : (
-                  <Text style={styles.actionButtonText}>Scan Fingerprint</Text>
+                  <Text style={styles.actionButtonText}>Login</Text>
                 )}
               </TouchableOpacity>
             </View>
 
             <Text style={styles.gestureHint}>
-              Swipe left to return to mode selection{'\n'}
+              Swipe left to go back{'\n'}
               Swipe down to go to Register
             </Text>
           </View>
@@ -510,6 +605,13 @@ const styles = StyleSheet.create({
   emailPreview: {
     color: '#8E8EA0',
     fontSize: 16,
+    marginBottom: 20,
+    textAlign: 'center',
+    paddingHorizontal: 10,
+  },
+  previewText: {
+    color: '#8E8EA0',
+    fontSize: 16,
     marginBottom: 25,
     textAlign: 'center',
     paddingHorizontal: 10,
@@ -545,6 +647,22 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 16,
     fontWeight: 'bold',
+  },
+  speakButton: {
+    width: '100%',
+    height: 44,
+    backgroundColor: 'rgba(108, 99, 255, 0.15)',
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: '#6C63FF',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  speakButtonText: {
+    color: '#6C63FF',
+    fontSize: 15,
+    fontWeight: '600',
   },
   gestureHint: {
     color: '#666',

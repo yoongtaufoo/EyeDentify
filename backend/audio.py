@@ -1,78 +1,78 @@
 """
 audio.py - Speech-to-text processing.
-Uses mesolitica/malaysian-whisper-tiny (Whisper tiny, fine-tuned for Malay/English).
-Runs locally — no external API needed.
+Uses Groq Cloud Whisper API (free, fast, no local model needed).
 Shared by both in-app chat and hardware chat modules.
 """
 
 import os
 import base64
 import tempfile
-import warnings
+import httpx
 
-# Lazy-load heavy ML imports only when first transcription happens
-_pipeline = None
-_model_id = "mesolitica/malaysian-whisper-tiny"
-
-
-def _get_pipeline():
-    """Load Whisper pipeline once, reuse for all subsequent calls."""
-    global _pipeline
-    if _pipeline is None:
-        print("[Audio] Loading Whisper model (first call may take 10-30s)...")
-        from transformers import AutomaticSpeechRecognitionPipeline
-        from transformers import pipeline as hf_pipeline
-
-        _pipeline = hf_pipeline(
-            "automatic-speech-recognition",
-            model=_model_id,
-            chunk_length_s=30,
-            device="cpu",  # change to "cuda" if you have GPU
-            token="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"
-        )
-        print(f"[Audio] Whisper model loaded: {_model_id}")
-    return _pipeline
+# Groq Whisper API config (free tier: 20 req/min, no card required)
+_GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+_GROQ_URL = "https://api.groq.com/openai/v1/audio/transcriptions"
+_WHISPER_MODEL = "whisper-large-v3"
 
 
 async def transcribe_audio_base64(audio_b64: str) -> str:
     """
-    Transcribe base64-encoded audio using local Whisper model.
+    Transcribe base64-encoded audio using Groq's cloud Whisper API.
+    No local ML libraries needed — runs entirely in the cloud.
 
     Args:
-        audio_b64: Base64-encoded audio string (expo-audio records as m4a/aac)
+        audio_b64: Base64-encoded audio string (WAV from frontend conversion)
 
     Returns:
         Transcribed text string, or empty string on failure
     """
-    try:
-        import torch
+    if not _GROQ_API_KEY:
+        print("[Audio] ERROR: GROQ_API_KEY not set in .env")
+        return ""
 
-        # Decode base64 to bytes, write to temp file
+    try:
+        # Decode base64 to bytes
         audio_bytes = base64.b64decode(audio_b64)
-        with tempfile.NamedTemporaryFile(suffix=".m4a", delete=False) as tmp:
+        print(f"[Audio] Sending {len(audio_bytes)} bytes to Groq Whisper API...")
+
+        # Write to temp file (API expects multipart file upload)
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
             tmp.write(audio_bytes)
             tmp_path = tmp.name
 
         try:
-            pipe = _get_pipeline()
-
-            # Suppress tokenizer warnings about sequence length
-            with warnings.catch_warnings():
-                warnings.simplefilter("ignore")
-
-                result = pipe(
-                    tmp_path,
-                    generate_kwargs={"language": "<|en|>", "task": "transcribe"},
-                    return_timestamps=False,
+            # Open file handle for upload, ensure it's closed before cleanup
+            file_handle = open(tmp_path, "rb")
+            
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.post(
+                    _GROQ_URL,
+                    headers={"Authorization": f"Bearer {_GROQ_API_KEY}"},
+                    files={
+                        "file": ("audio.wav", file_handle, "audio/wav"),
+                    },
+                    data={
+                        "model": _WHISPER_MODEL,
+                        "language": "en",
+                        "response_format": "json",
+                    },
                 )
+            
+            # Explicitly close file handle BEFORE os.unlink
+            file_handle.close()
 
-            text = result.get("text", "").strip()
-            if text:
-                print(f"[Audio] Transcribed ({len(text)} chars): {text[:80]}...")
+            if response.status_code == 200:
+                result = response.json()
+                text = result.get("text", "").strip()
+                if text:
+                    print(f"[Audio] Transcribed ({len(text)} chars): {text[:100]}")
+                    return text
+                else:
+                    print("[Audio] Empty transcription returned")
+                    return ""
             else:
-                print("[Audio] No transcription returned")
-
-            return text
+                print(f"[Audio] Groq API error {response.status_code}: {response.text[:200]}")
+                return ""
 
         finally:
             os.unlink(tmp_path)
@@ -80,3 +80,26 @@ async def transcribe_audio_base64(audio_b64: str) -> str:
     except Exception as e:
         print(f"[Audio] Transcription error: {e}")
         return ""
+
+
+def _detect_audio_format(audio_bytes: bytes) -> str:
+    """Detect audio format from file header magic bytes."""
+    if len(audio_bytes) < 4:
+        return "wav"
+    # WebM/EBML: 0x1A 0x45 0xDF 0xA3
+    if audio_bytes[:4] == b'\x1a\x45\xdf\xa3':
+        return "webm"
+    # Ogg: 'OggS'
+    if audio_bytes[:4] == b'OggS':
+        return "ogg"
+    # MP4/M4A: ftyp box
+    if audio_bytes[4:8] == b'ftyp':
+        return "m4a"
+    # WAV: RIFF
+    if audio_bytes[:4] == b'RIFF':
+        return "wav"
+    # FLAC: fLaC
+    if audio_bytes[:4] == b'fLaC':
+        return "flac"
+    # Default fallback
+    return "wav"

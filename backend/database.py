@@ -38,18 +38,16 @@ def get_profile(user_id: str) -> Optional[dict]:
 #     response = supabase.table("profiles").insert(data).execute()
 #     return response.data[0]
 
-def create_profile(user_id: str, full_name: str = None, pi_serial: str = None, keyboard_type: str = "normal") -> dict:
-    """Updated to include keyboard preference and use upsert."""
+def create_profile(user_id: str, full_name: str = None, pi_serial: str = None, keyboard_type: str = "normal", password: str = None) -> dict:
+    """Create/update profile including the real password (plain text in DB)."""
     data = {"id": user_id}
     if full_name: data["full_name"] = full_name
     if pi_serial: data["pi_serial"] = pi_serial
-    # Only include keyboard_type if the column exists (avoid PGRST204 errors)
-    # if keyboard_type and keyboard_type != "normal":
-    #     data["keyboard_type"] = keyboard_type
+    if keyboard_type: data["keyboard_type"] = keyboard_type
+    if password: data["password"] = password  # Store real password in DB
 
     print(f"[DEBUG] Upserting profile for user {user_id} with data: {data}")
     try:
-        # Use upsert to handle cases where Auth exists but DB profile was partially created or exists
         response = supabase.table("profiles").upsert(data).execute()
         if not response.data:
             print(f"[ERROR] Profile creation failed: No data returned")
