@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { isSpeechSupported, startRecording, stopRecording } from '../utils/whisper';
@@ -17,13 +17,17 @@ export default function RegisterScreen({ }) {
   const [name, setName] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
-  const [isRecording, setIsRecording] = useState(false);
   // Two-step voice email state
   const [emailStep, setEmailStep] = useState(0); // 0=idle, 1=recording username, 2=recording domain, 3=done
   const [emailUsername, setEmailUsername] = useState('');
   const [emailDomain, setEmailDomain] = useState('');
-  // Voice field tracking — which field are we recording into?
+  // Independent recording states per field — fixes cross-button interference
   const [recordingField, setRecordingField] = useState(''); // '' | 'email' | 'name' | 'password'
+  const [isRecordingEmail, setIsRecordingEmail] = useState(false);
+  const [isRecordingName, setIsRecordingName] = useState(false);
+  const [isRecordingPassword, setIsRecordingPassword] = useState(false);
+  // Password visibility (eye icon)
+  const [showPassword, setShowPassword] = useState(false);
   // Auto-stop timer ref for voice recordings
   const recordingTimerRef = useRef(null);
 
@@ -58,7 +62,7 @@ export default function RegisterScreen({ }) {
   /* ── Voice recording for NAME field ── */
   const startVoiceName = async () => {
     if (!isSpeechSupported()) { setError('Microphone not supported.'); return; }
-    setRecordingField('name'); setIsRecording(true);
+    setRecordingField('name'); setIsRecordingName(true);
     speak('Say your full name now.');
     try {
       await startRecording();
@@ -69,7 +73,7 @@ export default function RegisterScreen({ }) {
           await finishVoiceName();
         }
       }, 10000);
-    } catch { setIsRecording(false); setRecordingField(''); }
+    } catch { setIsRecordingName(false); setRecordingField(''); }
   };
 
   const finishVoiceName = async () => {
@@ -78,7 +82,7 @@ export default function RegisterScreen({ }) {
       clearTimeout(recordingTimerRef.current);
       recordingTimerRef.current = null;
     }
-    setIsRecording(false); setRecordingField(''); speak('Processing...');
+    setIsRecordingName(false); setRecordingField(''); speak('Processing...');
     try {
       const text = await stopRecording();
       if (text && text.trim()) {
@@ -87,14 +91,24 @@ export default function RegisterScreen({ }) {
         speak(`Heard name: ${cleaned}`);
       } else { speak('Could not hear your name. Please type it instead.'); }
     } catch (recErr) {
-      setError('Speech recognition failed: ' + recErr.message); setIsRecording(false);
+      setError('Speech recognition failed: ' + recErr.message); setIsRecordingName(false);
     }
   };
 
   /* ── Voice recording for PASSWORD field ── */
+  const toggleVoicePassword = async () => {
+    if (isRecordingPassword && recordingField === 'password') {
+      // Currently recording password → STOP
+      await finishVoicePassword();
+    } else {
+      // Not recording → START
+      await startVoicePassword();
+    }
+  };
+
   const startVoicePassword = async () => {
     if (!isSpeechSupported()) { setError('Microphone not supported.'); return; }
-    setRecordingField('password'); setIsRecording(true);
+    setRecordingField('password'); setIsRecordingPassword(true);
     speak('Say your password now. Speak each character clearly.');
     try {
       await startRecording();
@@ -105,7 +119,7 @@ export default function RegisterScreen({ }) {
           await finishVoicePassword();
         }
       }, 8000);
-    } catch { setIsRecording(false); setRecordingField(''); }
+    } catch { setIsRecordingPassword(false); setRecordingField(''); }
   };
 
   const finishVoicePassword = async () => {
@@ -114,16 +128,16 @@ export default function RegisterScreen({ }) {
       clearTimeout(recordingTimerRef.current);
       recordingTimerRef.current = null;
     }
-    setIsRecording(false); setRecordingField(''); speak('Processing...');
+    setIsRecordingPassword(false); setRecordingField(''); speak('Processing...');
     try {
       const text = await stopRecording();
       if (text && text.trim()) {
         const cleaned = text.trim().replace(/\s+/g, '');
         setPassword(cleaned);
-        speak(`Password heard: ${cleaned.length} characters.`);
+        speak(`Password heard: ${cleaned}. ${cleaned.length} characters.`);
       } else { speak('Could not hear your password. Please type it instead.'); }
     } catch (recErr) {
-      setError('Speech recognition failed: ' + recErr.message); setIsRecording(false);
+      setError('Speech recognition failed: ' + recErr.message); setIsRecordingPassword(false);
     }
   };
 
@@ -136,13 +150,13 @@ export default function RegisterScreen({ }) {
     setEmailStep(1);
     setEmailUsername('');
     setEmailDomain('');
-    setIsRecording(true);
+    setIsRecordingEmail(true);
     setRecordingField('email');
     speak('Step 1 of 2. Say your email username. For example: john123 or alice_dot_smith');
     try {
       await startRecording();
     } catch {
-      setIsRecording(false);
+      setIsRecordingEmail(false);
       setRecordingField('');
       setEmailStep(0);
     }
@@ -150,7 +164,7 @@ export default function RegisterScreen({ }) {
 
 /** Finish step 1, start step 2 = domain */
   const finishVoiceEmailStep1 = async () => {
-    setIsRecording(false);
+    setIsRecordingEmail(false);
     speak('Processing...');
     try {
       const text = await stopRecording();
@@ -160,12 +174,12 @@ export default function RegisterScreen({ }) {
         speak(`Heard username: ${cleaned}. Now step 2: say your email provider. For example: gmail dot com or yahoo dot com`);
         // Immediately start step 2
         setEmailStep(2);
-        setIsRecording(true);
+        setIsRecordingEmail(true);
         try {
           await startRecording();
         } catch {
           setEmailStep(1); // go back
-          setIsRecording(false);
+          setIsRecordingEmail(false);
         }
       } else {
         speak('Could not hear your username. Please try again or type manually.');
@@ -175,13 +189,13 @@ export default function RegisterScreen({ }) {
       console.error('[Register] Recording error:', recErr);
       setError('Speech recognition failed: ' + recErr.message);
       setEmailStep(0);
-      setIsRecording(false);
+      setIsRecordingEmail(false);
     }
   };
 
   /** Finish step 2 — combine and set full email */
   const finishVoiceEmailStep2 = async () => {
-    setIsRecording(false);
+    setIsRecordingEmail(false);
     speak('Processing...');
     try {
       const text = await stopRecording();
@@ -206,13 +220,13 @@ export default function RegisterScreen({ }) {
       console.error('[Register] Recording error:', recErr);
       setError('Speech recognition failed: ' + recErr.message);
       setEmailStep(0);
-      setIsRecording(false);
+      setIsRecordingEmail(false);
     }
   };
 
-  /** Unified toggle for voice recording (dispatches to correct step) */
+  /** Unified toggle for voice email recording (dispatches to correct step) */
   const toggleRecording = async () => {
-    if (isRecording) {
+    if (isRecordingEmail) {
       // Which field are we recording into?
       if (recordingField === 'name') await finishVoiceName();
       else if (recordingField === 'password') await finishVoicePassword();
@@ -220,7 +234,7 @@ export default function RegisterScreen({ }) {
       else if (emailStep === 2) await finishVoiceEmailStep2();
       else {
         // Legacy single-step fallback (keyboard mode recording)
-        setIsRecording(false);
+        setIsRecordingEmail(false);
         speak('Processing...');
         try {
           const text = await stopRecording();
@@ -236,7 +250,7 @@ export default function RegisterScreen({ }) {
           }
         } catch (recErr) {
           setError('Speech recognition failed: ' + recErr.message);
-          setIsRecording(false);
+          setIsRecordingEmail(false);
         }
       }
     } else {
@@ -246,10 +260,10 @@ export default function RegisterScreen({ }) {
       } else {
         try {
           if (!isSpeechSupported()) { setError('Microphone not supported.'); return; }
-          setIsRecording(true);
+          setIsRecordingEmail(true);
           await startRecording();
           speak('Listening... speak your email now.');
-        } catch { setIsRecording(false); }
+        } catch { setIsRecordingEmail(false); }
       }
     }
   };
@@ -346,7 +360,9 @@ export default function RegisterScreen({ }) {
           <p style={styles.modeIndicator} aria-live="polite">Mode: {inputMode?.toUpperCase() || 'Not selected'}</p>
 
           {inputMode === 'braille' ? (
-            <p style={{ color: '#6C63FF', margin: '10px 0' }}>Braille dot grid would appear here on mobile</p>
+            <p style={{ color: '#6C63FF', margin: '10px 0' }}>
+              In real implementation, braille user can connect real braille input keyboard to type
+            </p>
           ) : (
             <>
               <input
@@ -358,20 +374,20 @@ export default function RegisterScreen({ }) {
                 autoComplete="name"
                 aria-label="Full name (optional)"
                 tabIndex={0}
-                onFocus={() => speak('Full name input field. Type your full name or use the Speak Name button below.')}
+                onFocus={() => speak('Full name input. Type your full name or use the Speak Name button below.')}
               />
-              {/* Name voice input button */}
-              {(inputMode === 'audio' || true) && (
+              {/* Name voice input button — audio mode only */}
+              {inputMode === 'audio' && (
                 <div style={styles.fieldVoiceRow}>
                   <button type="button" onClick={startVoiceName}
-                    style={{ ...styles.fieldMicBtn, ...(recordingField==='name'?styles.fieldMicActive:{}), opacity: loading?0.5:1 }}
-                    disabled={loading || (isRecording && recordingField!=='name')}
+                    style={{ ...styles.fieldMicBtn, ...(isRecordingName?styles.fieldMicActive:{}), opacity: loading?0.5:1 }}
+                    disabled={loading || (isRecordingName || isRecordingEmail || isRecordingPassword)}
                     aria-label="Speak your name"
                     onFocus={() => speak('Speak Name button. Press Enter to start recording your name.')}
                   >
-                    {recordingField==='name' ? '🔴 Stop' : '🎤 Speak Name'}
+                    {isRecordingName ? '🔴 Stop' : '🎤 Speak Name'}
                   </button>
-                  {recordingField==='name' && <p style={styles.recordingHint}>Say your full name now...</p>}
+                  {isRecordingName && <p style={styles.recordingHint}>Say your full name now...</p>}
                 </div>
               )}
 
@@ -385,90 +401,109 @@ export default function RegisterScreen({ }) {
                 autoFocus
                 aria-label="Email address"
                 tabIndex={0}
-                onFocus={() => speak('Email input field. Type your email address.')}
+                onFocus={() => speak('Email input. Type your email address.')}
               />
 
-              <input
-                type="password"
-                style={styles.textInput}
-                value={password}
-                onChange={(e) => { setPassword(e.target.value); setError(null); }}
-                placeholder="Password (min 6 characters)"
-                autoComplete="new-password"
-                aria-label="Password, minimum 6 characters"
-                tabIndex={0}
-                onFocus={() => speak('Password input field. Type your password, minimum 6 characters.')}
-              />
-              {/* Password voice input button */}
-              {(inputMode === 'audio' || true) && (
-                <div style={styles.fieldVoiceRow}>
-                  <button type="button" onClick={startVoicePassword}
-                    style={{ ...styles.fieldMicBtn, ...(recordingField==='password'?styles.fieldMicActive:{}), opacity: loading?0.5:1 }}
-                    disabled={loading || (isRecording && recordingField!=='password')}
-                    aria-label="Speak your password"
-                    onFocus={() => speak('Speak Password button. Press Enter to start recording your password.')}
+              {/* Voice Input — Two-step for audio mode (RIGHT BELOW EMAIL INPUT) */}
+              {inputMode === 'audio' && (
+                <div style={styles.voiceArea}>
+                  {/* Step indicator */}
+                  {emailStep === 0 && (
+                    <p style={styles.stepHint} aria-live="polite">
+                      Two-step voice email entry will ask for username and domain separately (easier than saying "@").
+                    </p>
+                  )}
+                  {emailStep >= 1 && emailStep <= 2 && (
+                    <p style={styles.stepIndicator}>
+                      Step {emailStep}/2: {emailStep === 1 ? '🎤 Username (before @)' : '🎤 Domain (after @)'}
+                    </p>
+                  )}
+                  {emailStep === 3 && (
+                    <p style={styles.stepComplete} aria-live="polite">
+                      Email assembled: <strong>{email}</strong>
+                    </p>
+                  )}
+
+                  <button
+                    type="button"
+                    onClick={toggleRecording}
+                    style={{
+                      ...styles.voiceBtn,
+                      ...(isRecordingEmail ? styles.voiceBtnActive : {}),
+                      opacity: loading ? 0.5 : 1,
+                      cursor: loading ? 'not-allowed' : 'pointer',
+                    }}
+                    disabled={loading}
+                    aria-label={isRecordingEmail
+                      ? `Stop recording step ${emailStep}`
+                      : "Start two-step voice email entry"
+                    }
+                    aria-pressed={isRecordingEmail}
+                    tabIndex={0}
+                    onFocus={() => speak(isRecordingEmail ? `Recording in progress, step ${emailStep}. Press Enter to stop.` : 'Speak Email button. Press Enter to start two-step voice email entry.')}
                   >
-                    {recordingField==='password' ? '🔴 Stop' : '🎤 Speak Password'}
+                    {isRecordingEmail
+                      ? (emailStep === 1 ? <>🔴 Stop — Listening for username...</>
+                        : emailStep === 2 ? <>🔴 Stop — Listening for domain...</>
+                        : <>🔴 Stop & Transcribe</>)
+                      : (emailStep === 3 ? <>✓ Re-record Email</>
+                        : <>🎤 Speak Email (2 Steps)</>)
+                    }
                   </button>
-                  {recordingField==='password' && <p style={styles.recordingHint}>Say each character of your password...</p>}
+                  {isRecordingEmail && emailStep === 1 && (
+                    <p style={styles.recordingHint}>Say your username now (e.g., "alice123")...</p>
+                  )}
+                  {isRecordingEmail && emailStep === 2 && (
+                    <p style={styles.recordingHint}>Say your provider now (e.g., "gmail dot com")...</p>
+                  )}
                 </div>
               )}
+
+              {/* Password field with eye icon + mic button */}
+              <div style={{ position: 'relative', width: '100%' }}>
+                <input
+                  type={showPassword ? 'text' : 'password'}
+                  style={styles.textInput}
+                  value={password}
+                  onChange={(e) => { setPassword(e.target.value); setError(null); }}
+                  placeholder="Password (min 6 characters)"
+                  autoComplete="new-password"
+                  aria-label="Password, minimum 6 characters"
+                  tabIndex={0}
+                  onFocus={() => speak('Password input. Type your password, minimum 6 characters.')}
+                />
+              </div>
+
+              {/* Password action row: eye icon + speak password */}
+              <div style={styles.passwordActionRow}>
+                {/* Eye icon to show/hide transcribed password */}
+                {password && (
+                  <button type="button" onClick={() => {
+                    setShowPassword(!showPassword);
+                    speak(showPassword ? 'Password hidden.' : `Password revealed: ${password}. ${password.length} characters.`);
+                  }}
+                    style={styles.eyeBtn}
+                    aria-label={showPassword ? "Hide password" : "Show password"}
+                    tabIndex={0}
+                  >
+                    {showPassword ? '🙈 Hide' : '👁 Show'}
+                  </button>
+                )}
+                {/* Password voice input button — audio mode only */}
+                {inputMode === 'audio' && (
+                  <button type="button" onClick={toggleVoicePassword}
+                    style={{ ...styles.fieldMicBtn, ...(isRecordingPassword?styles.fieldMicActive:{}), opacity: loading?0.5:1 }}
+                    disabled={loading || (isRecordingName || isRecordingEmail || isRecordingPassword) && !isRecordingPassword}
+                    aria-label={isRecordingPassword ? "Stop password recording" : "Speak your password"}
+                    tabIndex={0}
+                    onFocus={() => speak(isRecordingPassword ? 'Stop Password button. Tap to stop recording.' : 'Speak Password button. Tap to start recording your password.')}
+                  >
+                    {isRecordingPassword ? '🔴 Stop Password' : '🎤 Speak Password'}
+                  </button>
+                )}
+                {isRecordingPassword && <p style={styles.recordingHint}>Say each character of your password...</p>}
+              </div>
             </>
-          )}
-
-          {/* Voice Input — Two-step for audio mode */}
-          {inputMode === 'audio' && (
-            <div style={styles.voiceArea}>
-              {/* Step indicator */}
-              {emailStep === 0 && (
-                <p style={styles.stepHint} aria-live="polite">
-                  Two-step voice email entry will ask for username and domain separately (easier than saying "@").
-                </p>
-              )}
-              {emailStep >= 1 && emailStep <= 2 && (
-                <p style={styles.stepIndicator}>
-                  Step {emailStep}/2: {emailStep === 1 ? '🎤 Username (before @)' : '🎤 Domain (after @)'}
-                </p>
-              )}
-              {emailStep === 3 && (
-                <p style={styles.stepComplete} aria-live="polite">
-                  Email assembled: <strong>{email}</strong>
-                </p>
-              )}
-
-              <button
-                type="button"
-                onClick={toggleRecording}
-                style={{
-                  ...styles.voiceBtn,
-                  ...(isRecording ? styles.voiceBtnActive : {}),
-                  opacity: loading || emailStep === 3 ? 0.5 : 1,
-                  cursor: loading || emailStep === 3 ? 'not-allowed' : 'pointer',
-                }}
-                disabled={loading || emailStep === 3}
-                aria-label={isRecording
-                  ? `Stop recording step ${emailStep}`
-                  : "Start two-step voice email entry"
-                }
-                aria-pressed={isRecording}
-                tabIndex={0}
-                onFocus={() => speak(isRecording ? `Recording in progress, step ${emailStep}. Press Enter to stop.` : 'Speak Email button. Press Enter to start two-step voice email entry.')}
-              >
-                {isRecording
-                  ? (emailStep === 1 ? <>🔴 Stop — Listening for username...</>
-                    : emailStep === 2 ? <>🔴 Stop — Listening for domain...</>
-                    : <>🔴 Stop & Transcribe</>)
-                  : (emailStep === 3 ? <>✓ Email Ready</>
-                    : <>🎤 Speak Email (2 Steps)</>)
-                }
-              </button>
-              {isRecording && emailStep === 1 && (
-                <p style={styles.recordingHint}>Say your username now (e.g., "alice123")...</p>
-              )}
-              {isRecording && emailStep === 2 && (
-                <p style={styles.recordingHint}>Say your provider now (e.g., "gmail dot com")...</p>
-              )}
-            </div>
           )}
 
           {email && <p style={styles.emailPreview} aria-live="polite">Email: {email}</p>}
@@ -631,4 +666,28 @@ const styles = {
   stepHint: { color: '#8E8EA0', fontSize: 13, textAlign: 'center', margin: '4px 0', lineHeight: 1.4 },
   stepIndicator: { color: '#6C63FF', fontSize: 14, fontWeight: 'bold', textAlign: 'center', margin: '6px 0' },
   stepComplete: { color: '#4ADE80', fontSize: 14, textAlign: 'center', margin: '6px 0' },
+  passwordActionRow: {
+    width: '100%',
+    display: 'flex',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 10,
+  },
+  eyeBtn: {
+    height: 36,
+    padding: '0 14px',
+    borderRadius: 10,
+    border: '1.5px solid #6C63FF',
+    background: 'rgba(108,99,255,0.08)',
+    color: '#6C63FF',
+    cursor: 'pointer',
+    fontSize: 13,
+    fontWeight: '600',
+    fontFamily: 'inherit',
+    display: 'flex',
+    justifyContent: 'center',
+    alignItems: 'center',
+    transition: 'all 0.15s',
+  },
 };
