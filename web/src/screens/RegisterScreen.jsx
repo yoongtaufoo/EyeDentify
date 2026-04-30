@@ -60,6 +60,16 @@ export default function RegisterScreen({ }) {
   };
 
   /* ── Voice recording for NAME field ── */
+  const toggleVoiceName = async () => {
+    if (isRecordingName && recordingField === 'name') {
+      // Currently recording name → STOP
+      await finishVoiceName();
+    } else {
+      // Not recording → START
+      await startVoiceName();
+    }
+  };
+
   const startVoiceName = async () => {
     if (!isSpeechSupported()) { setError('Microphone not supported.'); return; }
     setRecordingField('name'); setIsRecordingName(true);
@@ -379,11 +389,11 @@ export default function RegisterScreen({ }) {
               {/* Name voice input button — audio mode only */}
               {inputMode === 'audio' && (
                 <div style={styles.fieldVoiceRow}>
-                  <button type="button" onClick={startVoiceName}
+                  <button type="button" onClick={toggleVoiceName}
                     style={{ ...styles.fieldMicBtn, ...(isRecordingName?styles.fieldMicActive:{}), opacity: loading?0.5:1 }}
-                    disabled={loading || (isRecordingName || isRecordingEmail || isRecordingPassword)}
-                    aria-label="Speak your name"
-                    onFocus={() => speak('Speak Name button. Press Enter to start recording your name.')}
+                    disabled={loading || (!isRecordingName && (isRecordingEmail || isRecordingPassword))}
+                    aria-label={isRecordingName ? "Stop name recording" : "Speak your name"}
+                    onFocus={() => speak(isRecordingName ? 'Stop Name button. Tap to stop recording.' : 'Speak Name button. Press Enter to start recording your name.')}
                   >
                     {isRecordingName ? '🔴 Stop' : '🎤 Speak Name'}
                   </button>
