@@ -104,12 +104,17 @@ export default function ChatScreen() {
     fetchUserProfile();
   }, [user]);
 
-  // Welcome message once when chat view is first shown
+  // Welcome + gesture guide once when chat view is first shown
   useEffect(() => {
     if (!hasWelcomed && userFullName && viewMode === VIEW.CHAT) {
       setHasWelcomed(true);
       const greeting = `Welcome back, ${userFullName}. EyeDentify ready.`;
+      const gestures =
+        'Gesture guide. Tap the left side of the screen to open camera. ' +
+        'Hold the microphone button to record and send a voice message. ' +
+        'Two-finger double-tap anywhere to log out.';
       Speech.speak(greeting, { rate: 0.9 });
+      setTimeout(() => Speech.speak(gestures, { rate: 0.85 }), 2000);
     }
   }, [hasWelcomed, userFullName, viewMode]);
 
@@ -136,6 +141,9 @@ export default function ChatScreen() {
         id: msg.id || String(Math.random()),
         role: msg.role,
         content: msg.content,
+        timestamp: msg.created_at || undefined,
+        imageUri: msg.image_uri || null,
+        memoryId: msg.memory_id || null,
       }));
       setMessages(formatted);
     } else {
@@ -148,21 +156,6 @@ export default function ChatScreen() {
     }
     setLoading(false);
   };
-  // const loadChatHistory = async () => {
-  //   try {
-  //     const history = await getChatHistory(user.id);
-  //     const formatted = history.map((msg) => ({
-  //       id: msg.id || `msg-${Date.now()}-${Math.random()}`,
-  //       role: msg.role,
-  //       content: msg.content,
-  //       timestamp: msg.created_at,
-  //       imageUri: msg.image_uri || null,
-  //     }));
-  //     setMessages(formatted);
-  //   } catch (e) {
-  //     console.error('Failed to load chat history:', e);
-  //   }
-  // };
 
   const fetchUserProfile = async () => {
     // Get full_name from Supabase auth user metadata or profiles table
@@ -190,8 +183,9 @@ export default function ChatScreen() {
 
     try {
       const photo = await cameraRef.current.takePictureAsync({
-        quality: 0.5,
+        quality: 0.3,
         base64: false,
+        skipProcessing: true,
       });
 
       // Navigate back to chat immediately so user sees progress there

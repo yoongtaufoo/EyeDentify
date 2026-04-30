@@ -25,5 +25,8 @@ python-dotenv>=1.0.0
 # Audio transcription (async file I/O)
 aiofiles>=23.0.0
 
-# Google Cloud Speech-to-Text
-google-cloud-speech>=2.29.0
+# Audio transcription (local Whisper STT — no API needed)
+transformers>=4.46.0
+torch>=2.5.0
+torchaudio>=2.5.0
+accelerate>=1.0.0

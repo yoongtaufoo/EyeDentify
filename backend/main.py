@@ -21,6 +21,8 @@ app = FastAPI(
     title="EyeDentify API",
     description="Shared backend for EyeDentify - AI assistant for blind/visually impaired users",
     version="2.0.0",
+    # Allow large base64 images from mobile cameras (default 1MB is too small)
+    multipart_form_options={"max_part_size": 20 * 1024 * 1024},  # 20 MB
 )
 
 # CORS - allow frontend to connect
@@ -182,7 +184,8 @@ async def logout(request: Request):
 @app.post("/vision/process")
 async def vision_process(
     user_id: str = Form(...),
-    image: UploadFile = File(...),
+    image: UploadFile = File(None),
+    image_base64: str = Form(None),
     source: str = Form("phone"),  # 'phone' or 'hardware'
 ):
     """
@@ -192,17 +195,46 @@ async def vision_process(
       - Phone sends source='phone'
       - Pi sends source='hardware'
       
-    Returns: { description, objects, memory_id }
+    Accepts either:
+      - image: file upload (hardware / non-ExpoGo)
+      - image_base64: base64 string (Expo Go compatible)
+      
+    Returns: { description, objects, memory_id, image_url }
+    Also saves both user capture + AI response to chat_history so images persist on restart.
     """
     try:
-        image_data = await image.read()
+        # Read image from either source
+        if image_base64:
+            import base64 as b64mod
+            image_data = b64mod.urlsafe_b64decode(image_base64)
+        elif image:
+            image_data = await image.read()
+        else:
+            raise HTTPException(status_code=400, detail="No image provided")
+
         from vision import process_image
+        from database import save_chat_message
         
         result = await process_image(
             user_id=user_id,
             image_bytes=image_data,
             source=source,
         )
+
+        # Save to chat_history so vision messages survive app restarts
+        save_chat_message(
+            user_id=user_id,
+            role="user",
+            content="📷 Captured an image",
+            memory_id=result.get("memory_id"),
+        )
+        save_chat_message(
+            user_id=user_id,
+            role="assistant",
+            content=result.get("description", "Image processed."),
+            memory_id=result.get("memory_id"),
+        )
+
         return result
     except Exception as e:
         print(f"[API] Vision error: {e}")
@@ -261,9 +293,30 @@ async def chat_send(
 
 @app.get("/chat/history")
 async def chat_history(user_id: str, limit: int = 50):
-    """Get chat history for a user."""
-    from database import get_chat_history
+    """Get chat history for a user, enriched with image URLs from memories."""
+    from database import get_chat_history, get_memories_by_id_list
+
     history = get_chat_history(user_id, limit=limit)
+
+    # Collect all unique memory_ids from history
+    memory_ids = list(set(
+        msg.get("memory_id") for msg in history if msg.get("memory_id")
+    ))
+
+    # Batch-fetch matching memories for image URLs
+    memories_map = {}
+    if memory_ids:
+        memories = get_memories_by_id_list(memory_ids)
+        memories_map = {m["id"]: m for m in memories}
+
+    # Enrich history entries with image_url from their linked memory
+    for msg in history:
+        mid = msg.get("memory_id")
+        if mid and mid in memories_map:
+            mem = memories_map[mid]
+            if mem.get("image_url"):
+                msg["image_uri"] = mem["image_url"]
+
     return {"history": history}
 
 

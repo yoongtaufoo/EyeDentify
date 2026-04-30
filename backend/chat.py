@@ -1,6 +1,9 @@
 """
-chat.py - GLM Chatbot engine with memory awareness.
+chat.py - GLM Chatbot engine with Gemma fallback.
 Handles all conversational logic including date-based memory queries.
+
+Primary: GLM (z.ai / BigModel)
+Fallback: Gemma 4 (Google AI Studio) — kicks in on rate limit (429) or other API errors.
 
 SHARED by both in-app chat and hardware chat modules.
 """
@@ -11,11 +14,28 @@ from openai import AsyncOpenAI
 
 from database import get_chat_history, save_chat_message, get_memories_by_date, get_recent_memories
 
-# GLM Client (z.ai / BigModel)
-ai_client = AsyncOpenAI(
+# ============================================================
+# CLIENTS
+# ============================================================
+
+# Primary: GLM Client (z.ai / BigModel)
+glm_client = AsyncOpenAI(
     api_key=os.getenv("GLM_API_KEY"),
     base_url="https://open.bigmodel.cn/api/paas/v4"
 )
+
+# Fallback: Google GenerativeAI (Gemma 4) — using existing google-generativeai package
+_gemma_model = None
+
+
+def _get_gemma_model():
+    """Lazy-init Gemma model using existing google-generativeai package."""
+    global _gemma_model
+    if _gemma_model is None:
+        import google.generativeai as genai
+        genai.configure(api_key=os.getenv("GOOGLE_AI_STUDIO_KEY"))
+        _gemma_model = genai.GenerativeModel("gemma-4-26b-a4b-it")
+    return _gemma_model
 
 SYSTEM_PROMPT = """You are EyeDentify, an AI assistant for blind and visually impaired users.
 You are helpful, concise, and safety-conscious. Key guidelines:
@@ -26,6 +46,57 @@ You are helpful, concise, and safety-conscious. Key guidelines:
 4. When referencing memories/images the user has captured, use past tense.
 5. If the user asks about what they've seen before, reference their memory logs.
 6. Be warm and supportive. Your user may rely on you for independence."""
+
+
+async def _call_glm(system_prompt: str, user_content: str) -> str:
+    """Call GLM primary model. Raises on failure so caller can fallback."""
+    response = await glm_client.chat.completions.create(
+        model="GLM-4.7-Flash",
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_content},
+        ],
+        temperature=0.7,
+    )
+    return response.choices[0].message.content
+
+
+def _call_gemma(user_content: str) -> str:
+    """Call Gemma 4 as fallback (uses existing google-generativeai package)."""
+    model = _get_gemma_model()
+    response = model.generate_content(
+        [user_content],
+        generation_config={
+            "temperature": 0.7,
+        },
+    )
+    return response.text.strip()
+
+
+async def _ask_llm(user_prompt: str, system_prompt_override: str = None) -> str:
+    """
+    Call LLM with automatic fallback:
+      1. Try GLM first
+      2. On 429 / connection error → fall back to Gemma 4
+    """
+    sys = system_prompt_override or SYSTEM_PROMPT
+    try:
+        return await _call_glm(sys, user_prompt)
+    except Exception as e:
+        err_str = str(e)
+        if "429" in err_str or "rate" in err_str.lower() or "connection" in err_str.lower():
+            print(f"[Chat] GLM hit rate limit/error, falling back to Gemma 4: {e}")
+            try:
+                # Run sync gemma call in executor to avoid blocking event loop
+                import asyncio
+                loop = asyncio.get_event_loop()
+                return await loop.run_in_executor(None, _call_gemma, user_prompt)
+            except Exception as gemma_err:
+                print(f"[Chat] Gemma fallback also failed: {gemma_err}")
+                return "I'm having trouble connecting right now. Please try again in a moment."
+        else:
+            # Non-recoverable error (bad auth etc), don't retry
+            raise
 
 
 def _is_memory_query(text: str) -> bool:
@@ -118,16 +189,16 @@ async def _handle_memory_response(user_id: str, question: str) -> str:
     """Handle questions about past memories (dates, summaries, etc.)."""
     date_str, days_back = _parse_time_range(question)
     memories = get_memories_by_date(user_id, date_str=date_str, days_back=days_back)
-    
+
     if not memories:
         # Check if we have ANY memories at all
         all_mems = get_recent_memories(user_id, limit=1)
         if not all_mems:
             return "You don't have any memories recorded yet. Take some photos to build your visual diary!"
-        
+
         time_label = "that time period" if days_back else "today"
         return f"I don't have any memories from {time_label}. Would you like me to check a different date?"
-    
+
     # Build context from memories
     memory_texts = []
     for m in memories:
@@ -138,7 +209,7 @@ async def _handle_memory_response(user_id: str, question: str) -> str:
             time_str = dt.strftime("%I:%M %p")
         except:
             time_str = "unknown time"
-        
+
         desc = m.get("description", "")
         objs = m.get("objects", [])
         obj_labels = [o.get("label", "") for o in objs if isinstance(o, dict)]
@@ -146,52 +217,46 @@ async def _handle_memory_response(user_id: str, question: str) -> str:
         memory_texts.append(f"[{time_str}] {desc}{obj_str}")
 
     context = "\n".join(memory_texts)
-    
-    # Use GLM to produce a natural summary/response
-    response = await ai_client.chat.completions.create(
-        model="GLM-4.7-Flash",
-        messages=[
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": f"The user is asking about their past experiences.\n\nQuestion: {question}\n\nHere are their memory logs:\n{context}\n\nProvide a helpful, concise answer."}
-        ],
-        temperature=0.7,
+
+    user_prompt = (
+        f"The user is asking about their past experiences.\n\n"
+        f"Question: {question}\n\n"
+        f"Here are their memory logs:\n{context}\n\n"
+        f"Provide a helpful, concise answer."
     )
-    return response.choices[0].message.content
+    return await _ask_llm(user_prompt)
 
 
 async def _handle_image_qa(user_id: str, question: str, description: str) -> str:
     """Handle when user asks a question about the currently captured image."""
-    response = await ai_client.chat.completions.create(
-        model="GLM-4.7-Flash",
-        messages=[
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": f"The user just took a photo and here's its AI-generated description:\n\n{description}\n\nNow the user asks: {question}\n\nAnswer based on the image description. Be helpful and descriptive."}
-        ],
-        temperature=0.7,
+    user_prompt = (
+        f"The user just took a photo and here's its AI-generated description:\n\n"
+        f"{description}\n\n"
+        f"Now the user asks: {question}\n\n"
+        f"Answer based on the image description. Be helpful and descriptive."
     )
-    return response.choices[0].message.content
+    return await _ask_llm(user_prompt)
 
 
 async def _handle_general_chat(user_id: str, message: str) -> str:
     """Handle general conversation not related to images or memories."""
     # Get recent chat history for context
     recent_chats = get_chat_history(user_id, limit=10)
-    
-    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
-    
-    # Add recent conversation for continuity
-    for chat in recent_chats[-8:]:  # Last 8 messages for context
-        messages.append({
-            "role": chat.get("role", "user"),
-            "content": chat.get("content", ""),
-        })
-    
-    # Add current message
-    messages.append({"role": "user", "content": message})
-    
-    response = await ai_client.chat.completions.create(
-        model="GLM-4.7-Flash",
-        messages=messages,
-        temperature=0.7,
-    )
-    return response.choices[0].message.content
+
+    # Build conversation history as a single prompt for Gemma fallback compatibility
+    history_parts = []
+    for chat in recent_chats[-8:]:
+        role_label = chat.get("role", "user")
+        role_name = "User" if role_label == "user" else "Assistant"
+        history_parts.append(f"{role_name}: {chat.get('content', '')}")
+    history_context = "\n".join(history_parts) if history_parts else ""
+
+    if history_context:
+        user_prompt = (
+            f"Recent conversation:\n{history_context}\n\n"
+            f"User now says: {message}"
+        )
+    else:
+        user_prompt = message
+
+    return await _ask_llm(user_prompt)

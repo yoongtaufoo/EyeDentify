@@ -228,6 +228,35 @@ def get_recent_memories(user_id: str, limit: int = 20) -> list:
     return response.data or []
 
 
+def get_memories_by_id_list(memory_ids: list) -> list:
+    """Batch-fetch memories by a list of IDs. Used to enrich chat history with image URLs."""
+    if not memory_ids:
+        return []
+    # Supabase PostgREST supports IN filter with comma-separated values
+    response = (
+        supabase.table("memories")
+        .select("*")
+        .in_("id", memory_ids)
+        .execute()
+    )
+    data = response.data if response.data else []
+    # Normalize to plain dicts
+    result = []
+    for item in data:
+        if isinstance(item, dict):
+            result.append(item)
+        elif hasattr(item, '__dict__'):
+            result.append(dict(item.__dict__))
+        elif hasattr(item, 'model_dump'):
+            result.append(item.model_dump())
+        else:
+            try:
+                result.append(dict(item))
+            except (TypeError, ValueError):
+                result.append({"id": str(item)})
+    return result
+
+
 # ============================================================
 # CHAT HISTORY OPERATIONS (shared by phone + Pi)
 # ============================================================

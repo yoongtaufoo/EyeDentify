@@ -1,4 +1,5 @@
 import os
+import uuid
 import google.generativeai as genai
 from PIL import Image
 import io
@@ -8,43 +9,68 @@ from database import save_memory
 GOOGLE_API_KEY = os.getenv("GOOGLE_AI_STUDIO_KEY")
 genai.configure(api_key=GOOGLE_API_KEY)
 
+# Supabase storage
+from supabase import create_client
+_supabase_url = os.getenv("SUPABASE_URL")
+_supabase_key = os.getenv("SUPABASE_KEY")
+_storage_client = create_client(_supabase_url, _supabase_key)
+_STORAGE_BUCKET = "images"
+
+
+def _upload_image_to_storage(image_bytes: bytes, user_id: str) -> str | None:
+    """Upload image bytes to Supabase Storage, return public URL."""
+    try:
+        file_ext = "jpg"
+        file_name = f"{user_id}/{uuid.uuid4().hex}.{file_ext}"
+        _storage_client.storage.from_(_STORAGE_BUCKET).upload(
+            path=file_name,
+            file=image_bytes,
+            file_options={"content-type": "image/jpeg"},
+        )
+        public_url = _storage_client.storage.from_(_STORAGE_BUCKET).get_public_url(file_name)
+        return public_url
+    except Exception as e:
+        print(f"[VISION] Storage upload failed: {e}")
+        return None
+
+
 async def process_image(user_id: str, image_bytes: bytes, source: str = "phone"):
     """
     The core vision pipeline:
-    1. Convert bytes to Image
-    2. Call Gemini Pro Vision (or Gemini 1.5 Flash)
-    3. Save result to Supabase 'memories' table
+    1. Upload image to Supabase Storage for persistence
+    2. Call Gemini for description
+    3. Save result to memories table with image_url
     """
     try:
-        # 1. Prepare image for Gemini
-        img = Image.open(io.BytesIO(image_bytes))
-        
-        # 2. Initialize the model
-        model = genai.GenerativeModel('gemma-4-26b-a4b-it')
-        
-        prompt = (
-            "You are the eyes for a blind person. Describe what is in this image "
-            "concisely but with enough detail for navigation or understanding. "
-            "Mention objects, colors, and spatial orientation (left/right)."
-        )
+        # 1. Upload to Supabase Storage so it persists across app restarts
+        image_url = _upload_image_to_storage(image_bytes, user_id)
 
-        # 3. Get AI Description
+        # 2. Prepare image for Gemini
+        img = Image.open(io.BytesIO(image_bytes))
+
+        # 3. Initialize the model
+        model = genai.GenerativeModel('gemma-4-26b-a4b-it')
+
+        prompt = "Describe this image in one sentence."
+
+        # 4. Get AI Description
         response = model.generate_content([prompt, img])
         description = response.text.strip()
 
-        # 4. Save to Database (using your database.py function)
-        # We store it as a 'memory' so the user can ask questions about it later
+        # 5. Save to Database with image URL
         memory_record = save_memory(
             user_id=user_id,
             source=source,
             description=description,
-            objects=[] # You could extract specific labels here if needed
+            objects=[],
+            image_url=image_url,
         )
 
         return {
             "description": description,
             "objects": [],
-            "memory_id": memory_record.get("id")
+            "memory_id": memory_record.get("id"),
+            "image_url": image_url,
         }
 
     except Exception as e:

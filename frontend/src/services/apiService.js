@@ -5,6 +5,9 @@
  * Your teammate can also reference this file to understand the API contract.
  */
 
+import * as FileSystem from 'expo-file-system/legacy';
+import { manipulateAsync, SaveFormat } from 'expo-image-manipulator';
+
 const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL || 'http://192.168.100.9:8000';
 
 // ============================================================
@@ -56,29 +59,32 @@ export async function login(email, password) {
 
 /**
  * Send image to vision pipeline.
- * Returns: { description, objects, memory_id }
+ * Returns: { description, objects, memory_id, image_url }
  */
 export async function processImage(userId, imageUri) {
+  // Resize + compress to keep base64 payload small (< 500KB)
+  const manipulated = await manipulateAsync(
+    imageUri,
+    [{ resize: { width: 800 } }],
+    { compress: 0.6, format: SaveFormat.JPEG },
+  );
+
+  // On iOS Expo Go, FormData file refs often fail silently ("Network request failed").
+  // Solution: read file as base64 first (same pattern that works for audio).
+  const base64 = await FileSystem.readAsStringAsync(manipulated.uri, { encoding: 'base64' });
+
+  console.log(`[Vision] Image base64 size: ~${Math.round(base64.length * 0.75 / 1024)}KB`);
+
   const formData = new FormData();
   formData.append('user_id', userId);
   formData.append('source', 'phone');
-  
-  // React Native requires different format for file uploads
-  const uriParts = imageUri.split('.');
-  const fileType = uriParts[uriParts.length - 1] === 'jpg' ? 'jpeg' : uriParts[uriParts.length - 1];
-  
-  formData.append('image', {
-    uri: imageUri,
-    name: 'photo.jpg',
-    type: `image/${fileType}`,
-  });
+  formData.append('image_base64', base64);
 
   const response = await fetch(`${BACKEND_URL}/vision/process`, {
     method: 'POST',
     body: formData,
-    headers: { 'Content-Type': 'multipart/form-data' },
   });
-  
+
   const data = await response.json();
   if (!response.ok) throw new Error(data.detail || 'Vision processing failed');
   return data;
@@ -263,7 +269,7 @@ export async function agentInteract(userId, options = {}) {
   const response = await fetch(`${BACKEND_URL}/agent/interact`, {
     method: 'POST',
     body: formData,
-    headers: { 'Content-Type': 'multipart/form-data' },
+    // Do NOT set Content-Type manually — RN fetch needs auto boundary
   });
 
   // FIX: Read as text first to catch "Internal Server Error" strings

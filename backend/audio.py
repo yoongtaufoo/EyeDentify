@@ -1,82 +1,72 @@
 """
 audio.py - Speech-to-text processing.
-Converts audio recordings to text using Google Cloud Speech-to-Text API.
+Uses mesolitica/malaysian-whisper-tiny (Whisper tiny, fine-tuned for Malay/English).
+Runs locally — no external API needed.
 Shared by both in-app chat and hardware chat modules.
 """
 
 import os
 import base64
 import tempfile
+import warnings
 
-from google.cloud import speech_v1p1beta1 as speech
+# Lazy-load heavy ML imports only when first transcription happens
+_pipeline = None
+_model_id = "mesolitica/malaysian-whisper-tiny"
 
 
-def _get_speech_client():
-    """Create a Google Cloud Speech client using credentials from env."""
-    # Supports GOOGLE_APPLICATION_CREDENTIALS (service account JSON path)
-    # or GOOGLE_CLOUD_API_KEY (API key string for basic usage)
-    creds_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
-    api_key = os.getenv("GOOGLE_CLOUD_API_KEY")
+def _get_pipeline():
+    """Load Whisper pipeline once, reuse for all subsequent calls."""
+    global _pipeline
+    if _pipeline is None:
+        print("[Audio] Loading Whisper model (first call may take 10-30s)...")
+        from transformers import AutomaticSpeechRecognitionPipeline
+        from transformers import pipeline as hf_pipeline
 
-    if creds_path:
-        return speech.SpeechClient.from_service_account_json(creds_path)
-    elif api_key:
-        # Use default credentials + API key via client options
-        from google.api_core.client_options import ClientOptions
-        opts = ClientOptions(api_key=api_key, quota_project=None)
-        return speech.SpeechClient(client_options=opts)
-    else:
-        # Fall back to Application Default Credentials (ADC)
-        return speech.SpeechClient()
+        _pipeline = hf_pipeline(
+            "automatic-speech-recognition",
+            model=_model_id,
+            chunk_length_s=30,
+            device="cpu",  # change to "cuda" if you have GPU
+            token="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"
+        )
+        print(f"[Audio] Whisper model loaded: {_model_id}")
+    return _pipeline
 
 
 async def transcribe_audio_base64(audio_b64: str) -> str:
     """
-    Transcribe base64-encoded audio (from React Native expo-audio recording).
-    Uses Google Cloud Speech-to-Text — accurate, fast, supports many languages.
+    Transcribe base64-encoded audio using local Whisper model.
 
     Args:
-        audio_b64: Base64-encoded audio string (expo-audio records as m4a/wav)
+        audio_b64: Base64-encoded audio string (expo-audio records as m4a/aac)
 
     Returns:
         Transcribed text string, or empty string on failure
     """
     try:
-        client = _get_speech_client()
+        import torch
 
-        # Decode base64 back to bytes
+        # Decode base64 to bytes, write to temp file
         audio_bytes = base64.b64decode(audio_b64)
-
-        # Write to temp file (Google Cloud STT accepts file content or raw bytes)
         with tempfile.NamedTemporaryFile(suffix=".m4a", delete=False) as tmp:
             tmp.write(audio_bytes)
             tmp_path = tmp.name
 
         try:
-            with open(tmp_path, "rb") as f:
-                audio_content = f.read()
+            pipe = _get_pipeline()
 
-            # Configure recognition: English, enhanced model, auto punctuation
-            config = speech.RecognitionConfig(
-                encoding=speech.RecognitionConfig.AudioEncoding.MP4,
-                sample_rate_hertz=44100,
-                language_code="en-US",
-                enable_automatic_punctuation=True,
-                model="latest_long",
-            )
+            # Suppress tokenizer warnings about sequence length
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
 
-            audio = speech.Audio(content=audio_content)
+                result = pipe(
+                    tmp_path,
+                    generate_kwargs={"language": "<|en|>", "task": "transcribe"},
+                    return_timestamps=False,
+                )
 
-            print("[Audio] Sending to Google Cloud STT...")
-            response = client.recognize(config=config, audio=audio)
-
-            # Extract full transcription from all results
-            parts = []
-            for result in response.results:
-                if result.alternatives:
-                    parts.append(result.alternatives[0].transcript)
-
-            text = " ".join(parts).strip()
+            text = result.get("text", "").strip()
             if text:
                 print(f"[Audio] Transcribed ({len(text)} chars): {text[:80]}...")
             else:
