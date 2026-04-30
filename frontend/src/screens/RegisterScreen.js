@@ -31,10 +31,12 @@ export default function RegisterScreen({ navigation }) {
   const [name, setName] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
+  const [isRecording, setIsRecording] = useState(false);
 
   const emailInputRef = useRef(null);
   const nameInputRef = useRef(null);
   const passwordInputRef = useRef(null);
+  const audioControlRef = useRef(null); // holds { stop } from startListeningFlow
 
   // Welcome message on mount
   useEffect(() => {
@@ -49,9 +51,11 @@ export default function RegisterScreen({ navigation }) {
 
     if (mode === 'audio') {
       Speech.speak("Audio mode selected. Please speak your full name.");
+      setIsRecording(true);
       startListeningFlow("temp_user", (transcribedName) => {
         setName(transcribedName);
-      });
+        setIsRecording(false);
+      }).then((ctrl) => { audioControlRef.current = ctrl; });
     } else if (mode === 'braille') {
       Speech.speak("Braille mode selected. Use the dot grid to enter your full name.");
     } else {
@@ -70,9 +74,11 @@ export default function RegisterScreen({ navigation }) {
 
     if (inputMode === 'audio') {
       Speech.speak("Name received. Now please speak your email address.");
+      setIsRecording(true);
       startListeningFlow("temp_user", (transcribedEmail) => {
         setEmail(transcribedEmail);
-      });
+        setIsRecording(false);
+      }).then((ctrl) => { audioControlRef.current = ctrl; });
     } else if (inputMode === 'braille') {
       Speech.speak("Name received. Now use the dot grid to enter your email address.");
     } else {
@@ -92,9 +98,11 @@ export default function RegisterScreen({ navigation }) {
 
     if (inputMode === 'audio') {
       Speech.speak("Email received. Now please speak your desired password.");
+      setIsRecording(true);
       startListeningFlow("temp_user", (transcribedPassword) => {
         setPassword(transcribedPassword);
-      });
+        setIsRecording(false);
+      }).then((ctrl) => { audioControlRef.current = ctrl; });
     } else if (inputMode === 'braille') {
       Speech.speak("Email received. Now use the dot grid to enter your password.");
     } else {
@@ -115,12 +123,6 @@ export default function RegisterScreen({ navigation }) {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     setView(VIEW.EMAIL_INPUT);
     Speech.speak("Going back to email input.");
-  };
-
-  const goBackToEmail = () => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    setView(VIEW.NAME_INPUT);
-    Speech.speak("Going back to name input.");
   };
 
   // Finalize registration with biometrics
@@ -280,15 +282,44 @@ export default function RegisterScreen({ navigation }) {
       );
     }
 
-    // Audio mode - show transcription status
+    // Audio mode - show transcription status with Stop/Re-record control
     const values = { email, name, password };
+    const hasValue = !!values[fieldType];
 
     return (
       <View style={styles.audioStatus}>
-        <Text style={styles.audioStatusText}>
-          {values[fieldType] ? `Heard: ${values[fieldType]}` : `Listening for your ${fieldType}...`}
-        </Text>
-        <ActivityIndicator size="small" color="#6C63FF" style={styles.audioSpinner} />
+        <View style={styles.audioStatusInner}>
+          <Text style={[styles.audioStatusText, !isRecording && hasValue && styles.audioStatusDone]}>
+            {hasValue ? `Heard: ${values[fieldType]}` : (isRecording ? `Listening for your ${fieldType}...` : `Tap below to speak your ${fieldType}`)}
+          </Text>
+          {isRecording && <ActivityIndicator size="small" color="#FF4444" style={styles.audioSpinner} />}
+        </View>
+        <TouchableOpacity
+          style={[
+            styles.audioStopButton,
+            isRecording ? styles.audioStopButtonActive : styles.audioReRecordButton,
+          ]}
+          onPress={() => {
+            if (isRecording && audioControlRef.current) {
+              audioControlRef.current.stop();
+            } else {
+              // Re-record: trigger listening flow again based on field type
+              setIsRecording(true);
+              const handler = (val) => {
+                if (fieldType === 'name') setName(val);
+                else if (fieldType === 'email') setEmail(val);
+                else if (fieldType === 'password') setPassword(val);
+                setIsRecording(false);
+              };
+              startListeningFlow("temp_user", handler).then((ctrl) => { audioControlRef.current = ctrl; });
+            }
+          }}
+          disabled={loading}
+        >
+          <Text style={styles.audioStopButtonText}>
+            {isRecording ? '⏹ STOP' : (hasValue ? '🔄 RE-RECORD' : '🎤 START')}
+          </Text>
+        </TouchableOpacity>
       </View>
     );
   };
@@ -614,7 +645,6 @@ const styles = StyleSheet.create({
   },
   audioStatus: {
     width: '100%',
-    height: 55,
     backgroundColor: 'rgba(76, 175, 80, 0.1)',
     borderRadius: 12,
     borderWidth: 1.5,
@@ -622,8 +652,14 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     marginBottom: 20,
-    flexDirection: 'row',
     paddingHorizontal: 15,
+    paddingVertical: 12,
+  },
+  audioStatusInner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 10,
   },
   audioStatusText: {
     color: '#4CAF50',
@@ -631,8 +667,33 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     marginRight: 10,
   },
+  audioStatusDone: {
+    color: '#4ADE80',
+  },
   audioSpinner: {
     marginLeft: 10,
+  },
+  audioStopButton: {
+    width: '100%',
+    height: 44,
+    borderRadius: 10,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  audioStopButtonActive: {
+    backgroundColor: 'rgba(255, 68, 68, 0.2)',
+    borderColor: '#FF4444',
+    borderWidth: 1.5,
+  },
+  audioReRecordButton: {
+    backgroundColor: 'rgba(108, 99, 255, 0.15)',
+    borderColor: '#6C63FF',
+    borderWidth: 1.5,
+  },
+  audioStopButtonText: {
+    fontSize: 15,
+    fontWeight: '700',
+    letterSpacing: 1,
   },
   emailPreview: {
     color: '#8E8EA0',

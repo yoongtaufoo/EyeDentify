@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { isSpeechSupported, startRecording, stopRecording } from '../utils/whisper';
@@ -24,9 +24,17 @@ export default function RegisterScreen({ }) {
   const [emailDomain, setEmailDomain] = useState('');
   // Voice field tracking — which field are we recording into?
   const [recordingField, setRecordingField] = useState(''); // '' | 'email' | 'name' | 'password'
+  // Auto-stop timer ref for voice recordings
+  const recordingTimerRef = useRef(null);
 
   useEffect(() => {
     speak('Registration. Choose input method. Click Audio, Braille, or Keyboard.');
+    // Cleanup recording timers on unmount
+    return () => {
+      if (recordingTimerRef.current) {
+        clearTimeout(recordingTimerRef.current);
+      }
+    };
   }, []);
 
   const selectMode = (mode) => {
@@ -52,11 +60,24 @@ export default function RegisterScreen({ }) {
     if (!isSpeechSupported()) { setError('Microphone not supported.'); return; }
     setRecordingField('name'); setIsRecording(true);
     speak('Say your full name now.');
-    try { await startRecording(); }
-    catch { setIsRecording(false); setRecordingField(''); }
+    try {
+      await startRecording();
+      // Auto-stop after 10 seconds — names should be short
+      recordingTimerRef.current = setTimeout(async () => {
+        if (recordingField === 'name') {
+          speak('Time\'s up. Processing name...');
+          await finishVoiceName();
+        }
+      }, 10000);
+    } catch { setIsRecording(false); setRecordingField(''); }
   };
 
   const finishVoiceName = async () => {
+    // Clear auto-stop timer if manually stopped
+    if (recordingTimerRef.current) {
+      clearTimeout(recordingTimerRef.current);
+      recordingTimerRef.current = null;
+    }
     setIsRecording(false); setRecordingField(''); speak('Processing...');
     try {
       const text = await stopRecording();
@@ -75,11 +96,24 @@ export default function RegisterScreen({ }) {
     if (!isSpeechSupported()) { setError('Microphone not supported.'); return; }
     setRecordingField('password'); setIsRecording(true);
     speak('Say your password now. Speak each character clearly.');
-    try { await startRecording(); }
-    catch { setIsRecording(false); setRecordingField(''); }
+    try {
+      await startRecording();
+      // Auto-stop after 8 seconds — passwords should be short
+      recordingTimerRef.current = setTimeout(async () => {
+        if (recordingField === 'password') {
+          speak('Time\'s up. Processing password...');
+          await finishVoicePassword();
+        }
+      }, 8000);
+    } catch { setIsRecording(false); setRecordingField(''); }
   };
 
   const finishVoicePassword = async () => {
+    // Clear auto-stop timer if manually stopped
+    if (recordingTimerRef.current) {
+      clearTimeout(recordingTimerRef.current);
+      recordingTimerRef.current = null;
+    }
     setIsRecording(false); setRecordingField(''); speak('Processing...');
     try {
       const text = await stopRecording();

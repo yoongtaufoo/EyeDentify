@@ -125,23 +125,24 @@ async function convertToWavBase64(blob) {
 /**
  * Encode an AudioBuffer as a PCM WAV file (no dependencies needed).
  * Supports resampling to target sample rate.
+ * Trims silence from start/end and caps max duration to keep file size reasonable.
  */
 function audioBufferToWav(audioBuffer, targetSampleRate = 16000) {
   const numChannels = 1; // force mono
   const sampleRate = targetSampleRate;
-  
+
   // Get float data and resample if needed
   let samples;
   if (audioBuffer.numberOfChannels > 0) {
     // Mix down to mono if stereo
     const leftChannel = audioBuffer.getChannelData(0);
     const rightChannel = audioBuffer.numberOfChannels > 1 ? audioBuffer.getChannelData(1) : null;
-    
+
     // Simple linear resampling
     const ratio = audioBuffer.sampleRate / sampleRate;
     const newLength = Math.round(leftChannel.length / ratio);
     samples = new Float32Array(newLength);
-    
+
     for (let i = 0; i < newLength; i++) {
       const srcIdx = Math.round(i * ratio);
       if (rightChannel) {
@@ -153,7 +154,23 @@ function audioBufferToWav(audioBuffer, targetSampleRate = 16000) {
   } else {
     samples = new Float32Array(0);
   }
-  
+
+  // ── Trim silence from start and end ──
+  const silenceThreshold = 0.02; // adjust sensitivity (lower = more aggressive trim)
+  const trimStart = findFirstNonSilence(samples, silenceThreshold);
+  const trimEnd = findLastNonSilence(samples, silenceThreshold);
+
+  if (trimStart < trimEnd) {
+    samples = samples.subarray(trimStart, trimEnd + 1);
+  }
+
+  // ── Cap duration at ~15 seconds (15 * 16000 * 2 = 480KB raw, ~640KB base64 — safely under 1MB) ──
+  const maxSamples = sampleRate * 15;
+  if (samples.length > maxSamples) {
+    console.warn(`[Whisper] Audio too long (${(samples.length / sampleRate).toFixed(1)}s), truncating to 15s`);
+    samples = samples.subarray(0, maxSamples);
+  }
+
   // Convert float 32-bit to 16-bit PCM
   const dataLength = samples.length * 2;
   const buffer = new ArrayBuffer(44 + dataLength); // 44 byte header + data
@@ -189,6 +206,29 @@ function audioBufferToWav(audioBuffer, targetSampleRate = 16000) {
   return new Blob([buffer], { type: 'audio/wav' });
 }
 
+/** Find first sample index that exceeds silence threshold */
+function findFirstNonSilence(samples, threshold) {
+  // Start from beginning, look for first non-silent frame (~10ms window)
+  const frameSize = Math.floor(160); // ~10ms at 16kHz
+  for (let i = 0; i < samples.length - frameSize; i += frameSize) {
+    let sum = 0;
+    for (let j = 0; j < frameSize; j++) sum += Math.abs(samples[i + j]);
+    if ((sum / frameSize) > threshold) return i;
+  }
+  return 0;
+}
+
+/** Find last sample index that exceeds silence threshold */
+function findLastNonSilence(samples, threshold) {
+  const frameSize = Math.floor(160);
+  for (let i = samples.length - frameSize; i >= 0; i -= frameSize) {
+    let sum = 0;
+    for (let j = 0; j < frameSize; j++) sum += Math.abs(samples[i + j]);
+    if ((sum / frameSize) > threshold) return Math.min(i + frameSize, samples.length - 1);
+  }
+  return samples.length - 1;
+}
+
 function writeString(view, offset, str) {
   for (let i = 0; i < str.length; i++) {
     view.setUint8(offset + i, str.charCodeAt(i));
@@ -209,10 +249,17 @@ function blobToBase64(blob) {
 }
 
 async function transcribeWithBackend(audioBase64, mimeType, userId = null) {
+  // Safety check: refuse to send if still oversized after trimming (shouldn't happen, but just in case)
+  const sizeKB = Math.round(audioBase64.length / 1024);
+  if (sizeKB > 900) {
+    console.error(`[Whisper] Audio still too large after trimming: ${sizeKB}KB. The recording may be too long or have background noise.`);
+    throw new Error(`Recording too large (${sizeKB}KB). Please record a shorter clip — under 10 seconds is ideal.`);
+  }
+
   const formData = new FormData();
   formData.append('audio_base64', audioBase64);
 
-  console.log(`[Whisper] Sending ${Math.round(audioBase64.length / 1024)}KB of audio to /audio/transcribe (mime: ${mimeType})...`);
+  console.log(`[Whisper] Sending ${sizeKB}KB of audio to /audio/transcribe (mime: ${mimeType})...`);
 
   try {
     const response = await fetch(`${BACKEND_URL}/audio/transcribe`, {
