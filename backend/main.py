@@ -39,25 +39,12 @@ app.add_middleware(
 
 # ============================================================
 # SERVE WEB FRONTEND STATIC FILES (for CloudStudio deployment)
+# NOTE: Catch-all SPA route is at the BOTTOM of this file (after all API routes)
 # ============================================================
 
 WEB_DIST_PATH = Path(__file__).parent.parent / "web" / "dist"
 if WEB_DIST_PATH.exists():
     app.mount("/assets", StaticFiles(directory=str(WEB_DIST_PATH / "assets")), name="assets")
-
-
-@app.get("/{full_path:path}")
-async def serve_spa(full_path: str):
-    """Serve SPA - return index.html for all non-API routes."""
-    # Skip API routes
-    api_prefixes = ("/auth/", "/vision/", "/audio/", "/chat/", "/agent/", "/hardware/")
-    if full_path.startswith(api_prefixes):
-        raise HTTPException(status_code=404, detail="Not found")
-    
-    index_file = WEB_DIST_PATH / "index.html"
-    if index_file.exists():
-        return FileResponse(str(index_file))
-    raise HTTPException(status_code=404, detail="Frontend not built")
 
 
 from fastapi.exceptions import RequestValidationError
@@ -574,3 +561,16 @@ async def hardware_webhook(
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
+
+
+# ============================================================
+# CATCH-ALL SPA ROUTE (MUST be last - after all API routes)
+# ============================================================
+
+@app.get("/{full_path:path}")
+async def serve_spa(full_path: str):
+    """Serve SPA - return index.html for all non-API routes."""
+    index_file = WEB_DIST_PATH / "index.html"
+    if index_file.exists():
+        return FileResponse(str(index_file))
+    raise HTTPException(status_code=404, detail="Frontend not built")
