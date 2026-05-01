@@ -11,8 +11,11 @@ import os
 import uuid
 import base64
 from typing import Optional
+from pathlib import Path
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse, JSONResponse
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -33,6 +36,28 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ============================================================
+# SERVE WEB FRONTEND STATIC FILES (for CloudStudio deployment)
+# ============================================================
+
+WEB_DIST_PATH = Path(__file__).parent.parent / "web" / "dist"
+if WEB_DIST_PATH.exists():
+    app.mount("/assets", StaticFiles(directory=str(WEB_DIST_PATH / "assets")), name="assets")
+
+
+@app.get("/{full_path:path}")
+async def serve_spa(full_path: str):
+    """Serve SPA - return index.html for all non-API routes."""
+    # Skip API routes
+    api_prefixes = ("/auth/", "/vision/", "/audio/", "/chat/", "/agent/", "/hardware/")
+    if full_path.startswith(api_prefixes):
+        raise HTTPException(status_code=404, detail="Not found")
+    
+    index_file = WEB_DIST_PATH / "index.html"
+    if index_file.exists():
+        return FileResponse(str(index_file))
+    raise HTTPException(status_code=404, detail="Frontend not built")
 
 
 from fastapi.exceptions import RequestValidationError
