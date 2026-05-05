@@ -4,6 +4,7 @@ import { AuthProvider, useAuth } from './contexts/AuthContext';
 import LoginScreen from './screens/LoginScreen';
 import RegisterScreen from './screens/RegisterScreen';
 import ChatScreen from './screens/ChatScreen';
+import MainLayout from './screens/MainLayout';
 
 /* ── Auth Guard: redirects unauthenticated users to /login ── */
 function ProtectedRoute({ children }) {
@@ -38,13 +39,13 @@ function LogoutPage() {
 function LoadingSpinner() {
   return (
     <div style={{
-      flex: 1, backgroundColor: '#0A0A0F',
+      flex: 1, backgroundColor: '#F7F7F7',
       display: 'flex', justifyContent: 'center', alignItems: 'center',
       minHeight: '100vh',
     }}>
       <div style={{
         width: 40, height: 40,
-        border: '4px solid #6C63FF', borderTopColor: 'transparent',
+        border: '4px solid #E8E8E8', borderTopColor: '#F5A623',
         borderRadius: '50%', animation: 'spin 0.8s linear infinite',
       }} />
       <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
@@ -64,9 +65,9 @@ function AppRoutes() {
         <PublicRoute><RegisterScreen /></PublicRoute>
       } />
 
-      {/* Protected routes */}
+      {/* Protected routes - Main app with tabs */}
       <Route path="/home" element={
-        <ProtectedRoute><ChatScreenWithLogout /></ProtectedRoute>
+        <ProtectedRoute><MainLayoutWithAuth /></ProtectedRoute>
       } />
 
       {/* Logout action */}
@@ -79,19 +80,18 @@ function AppRoutes() {
   );
 }
 
-/* Wraps ChatScreen to inject logout navigation instead of callback */
-function ChatScreenWithLogout() {
+/* Wraps MainLayout to inject auth state */
+function MainLayoutWithAuth() {
   const { signOut } = useAuth();
   const navigate = useNavigate();
+  const { user } = useAuth();
 
   const handleLogout = async () => {
     await signOut();
     navigate('/login', { replace: true });
   };
 
-  // Pass user from context directly
-  const { user } = useAuth();
-  return <ChatScreen user={user} onLogout={handleLogout} />;
+  return <MainLayout user={user} onLogout={handleLogout} />;
 }
 
 export default function App() {

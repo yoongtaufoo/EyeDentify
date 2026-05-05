@@ -310,7 +310,11 @@ export default function RegisterScreen({ }) {
 
   return (
     <div style={styles.container} role="main" aria-label="EyeDentify Registration">
-      <h1 style={styles.title} role="heading" aria-level={1}>REGISTER</h1>
+      <h1 style={styles.title} role="heading" aria-level={1}>
+        <span style={styles.titleIcon}>{'\u{1F441}\uFE0F'}</span>
+        Create Account
+      </h1>
+      <p style={styles.subtitle}>Join EyeDentify today</p>
 
       {/* Error Banner */}
       {error && (
@@ -370,7 +374,7 @@ export default function RegisterScreen({ }) {
           <p style={styles.modeIndicator} aria-live="polite">Mode: {inputMode?.toUpperCase() || 'Not selected'}</p>
 
           {inputMode === 'braille' ? (
-            <p style={{ color: '#6C63FF', margin: '10px 0' }}>
+            <p style={{ color: '#7C4DFF', margin: '10px 0', fontSize: 13, lineHeight: 1.5 }}>
               In real implementation, braille user can connect real braille input keyboard to type
             </p>
           ) : (
@@ -570,20 +574,40 @@ function speak(text) {
 const styles = {
   container: {
     flex: 1,
-    backgroundColor: '#0A0A0F',
+    backgroundColor: '#F7F7F7',
     display: 'flex',
     flexDirection: 'column',
     justifyContent: 'center',
     alignItems: 'center',
     padding: 20,
     minHeight: '100vh',
+    fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
   },
   title: {
     fontSize: 32,
-    fontWeight: 'bold',
-    color: '#FFFFFF',
-    marginBottom: 30,
-    letterSpacing: 1.5,
+    fontWeight: 800,
+    color: '#222',
+    marginBottom: 6,
+    letterSpacing: -0.5,
+    display: 'flex',
+    alignItems: 'center',
+    gap: 10,
+  },
+  titleIcon: {
+    width: 38,
+    height: 38,
+    borderRadius: 10,
+    background: 'linear-gradient(135deg, #F5A623, #FF8C00)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    fontSize: 19,
+  },
+  subtitle: {
+    fontSize: 14,
+    color: '#999',
+    marginBottom: 28,
+    textAlign: 'center',
   },
   errorBanner: {
     width: '100%',
@@ -591,16 +615,16 @@ const styles = {
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'space-between',
-    background: 'rgba(255,60,60,0.12)',
-    border: '1px solid rgba(255,60,60,0.3)',
+    background: '#FFF0EE',
+    border: '1px solid rgba(217,74,74,0.2)',
     borderRadius: 12,
     padding: '12px 16px',
-    color: '#FF8888',
+    color: '#D94A4A',
     fontSize: 14,
     marginBottom: 16,
     boxSizing: 'border-box',
   },
-  dismissBtn: { background: 'none', border: 'none', color: '#FF8888', fontSize: 18, cursor: 'pointer', padding: '2px 6px' },
+  dismissBtn: { background: 'none', border: 'none', color: '#D94A4A', fontSize: 18, cursor: 'pointer', padding: '2px 6px' },
   modePicker: {
     width: '100%',
     maxWidth: 400,
@@ -608,44 +632,48 @@ const styles = {
     display: 'flex',
     flexDirection: 'column',
   },
-  instruction: { color: '#8E8EA0', fontSize: 18, marginBottom: 30, textAlign: 'center' },
+  instruction: { color: '#555', fontSize: 17, fontWeight: 600, marginBottom: 24, textAlign: 'center' },
   modeButton: {
-    width: '100%', height: 56, borderRadius: 14,
-    marginBottom: 12, cursor: 'pointer', fontSize: 16, fontWeight: 'bold',
-    fontFamily: 'inherit', transition: 'all 0.15s',
+    width: '100%', height: 54, borderRadius: 14,
+    marginBottom: 11, cursor: 'pointer', fontSize: 15, fontWeight: 700,
+    fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif", transition: 'all 0.15s',
     display: 'flex', justifyContent: 'center', alignItems: 'center',
-    borderWidth: 2, borderStyle: 'solid', borderColor: 'transparent',
+    borderWidth: 1.5, borderStyle: 'solid', borderColor: '#EEE',
+    backgroundColor: '#FFFFFF', color: '#444',
   },
-  audioButton: { backgroundColor: 'rgba(76,175,80,0.15)', borderColor: '#4CAF50', color: '#4CAF50' },
-  brailleButton: { backgroundColor: 'rgba(108,99,255,0.15)', borderColor: '#6C63FF', color: '#6C63FF' },
-  keyboardButton: { backgroundColor: 'rgba(255,193,7,0.15)', borderColor: '#FFC107', color: '#FFC107' },
-  hint: { color: '#666', fontSize: 14, textAlign: 'center', marginTop: 20 },
+  audioButton: { borderColor: '#4CAF50', background: '#F8FFF8', color: '#2E7D32' },
+  brailleButton: { borderColor: '#7C4DFF', background: '#F8F5FF', color: '#5C3FD4' },
+  keyboardButton: { borderColor: '#F5A623', background: '#FFF8EE', color: '#B07800' },
+  hint: { color: '#AAA', fontSize: 13, textAlign: 'center', marginTop: 18 },
   loginLink: {
-    background: 'none', color: '#6C63FF', border: 'none', cursor: 'pointer',
-    marginTop: 16, fontSize: 15, textDecoration: 'underline', fontFamily: 'inherit',
+    background: 'none', color: '#F5A623', border: 'none', cursor: 'pointer',
+    marginTop: 18, fontSize: 14, textDecoration: 'none', fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+    fontWeight: 600, padding: '8px 0',
   },
   inputArea: {
     width: '100%', maxWidth: 400, display: 'flex', flexDirection: 'column', alignItems: 'center',
+    backgroundColor: '#FFFFFF', borderRadius: 20, padding: '28px 24px',
+    border: '1px solid #EEE', boxShadow: '0 2px 12px rgba(0,0,0,0.04)',
   },
-  label: { color: '#FFFFFF', fontSize: 20, marginBottom: 10, fontWeight: '600' },
-  modeIndicator: { color: '#6C63FF', fontSize: 16, marginBottom: 18, fontWeight: 'bold' },
+  label: { color: '#222', fontSize: 17, marginBottom: 14, fontWeight: 700, alignSelf: 'flex-start' },
+  modeIndicator: { color: '#F5A623', fontSize: 13, marginBottom: 16, fontWeight: 700, alignSelf: 'flex-start', textTransform: 'uppercase', letterSpacing: 0.5 },
   textInput: {
-    width: '100%', height: 48, backgroundColor: '#1A1A24', borderRadius: 12,
-    padding: '14px 18px', color: '#FFFFFF', fontSize: 16,
-    borderBottom: '2px solid #2A2A38', marginBottom: 14, boxSizing: 'border-box',
-    outline: 'none', fontFamily: 'inherit', transition: 'border-color 0.2s',
+    width: '100%', height: 48, backgroundColor: '#F5F5F5', borderRadius: 12,
+    padding: '14px 16px', color: '#222', fontSize: 15,
+    border: '1.5px solid #EEE', marginBottom: 12, boxSizing: 'border-box',
+    outline: 'none', fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif", transition: 'border-color 0.2s',
   },
   voiceArea: { width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8, margin: '6px 0' },
   voiceBtn: {
-    width: '100%', height: 48, borderRadius: 14,
-    borderWidth: 2, borderStyle: 'solid', borderColor: '#4CAF50',
-    background: 'rgba(76,175,80,0.08)', color: '#4CAF50', cursor: 'pointer',
-    fontSize: 15, fontWeight: '600', fontFamily: 'inherit', transition: 'all 0.15s',
+    width: '100%', height: 48, borderRadius: 12,
+    borderWidth: 1.5, borderStyle: 'solid', borderColor: '#4CAF50',
+    background: '#F8FFF8', color: '#2E7D32', cursor: 'pointer',
+    fontSize: 14, fontWeight: '600', fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif", transition: 'all 0.15s',
     display: 'flex', justifyContent: 'center', alignItems: 'center',
   },
-  voiceBtnActive: { background: 'rgba(255,60,60,0.15)', borderColor: '#FF4444', color: '#FF4444' },
-  recordingHint: { color: '#4CAF50', fontSize: 13, fontStyle: 'italic' },
-  emailPreview: { color: '#8E8EA0', fontSize: 15, marginBottom: 18, textAlign: 'center' },
+  voiceBtnActive: { background: '#FFF0EE', borderColor: '#D94A4A', color: '#D94A4A' },
+  recordingHint: { color: '#2E7D32', fontSize: 12, fontStyle: 'italic' },
+  emailPreview: { color: '#888', fontSize: 13, marginBottom: 16, textAlign: 'center' },
   // Per-field mic buttons (name, password)
   fieldVoiceRow: {
     width: '100%', display: 'flex', flexDirection: 'column',
@@ -654,28 +682,27 @@ const styles = {
   fieldMicBtn: {
     width: '100%', height: 36, borderRadius: 10,
     border: '1.5px solid #FF9800',
-    background: 'rgba(255,152,0,0.08)', color: '#FF9800',
-    cursor: 'pointer', fontSize: 13, fontWeight: '600', fontFamily: 'inherit',
+    background: '#FFF8EE', color: '#B07800',
+    cursor: 'pointer', fontSize: 13, fontWeight: '600', fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
     display: 'flex', justifyContent: 'center', alignItems: 'center',
     transition: 'all 0.15s',
   },
   fieldMicActive: {
-    background: 'rgba(255,60,60,0.12)',
-    borderColor: '#FF4444', color: '#FF4444',
+    background: '#FFF0EE', borderColor: '#D94A4A', color: '#D94A4A',
   },
   buttonRow: { display: 'flex', justifyContent: 'space-between', width: '100%', gap: 12, marginBottom: 12 },
   actionButton: {
     flex: 1, height: 48, borderRadius: 12, cursor: 'pointer',
-    fontSize: 15, fontWeight: 'bold', fontFamily: 'inherit',
+    fontSize: 15, fontWeight: '700', fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
     display: 'flex', justifyContent: 'center', alignItems: 'center',
   },
-  backButton: { backgroundColor: 'rgba(255,255,255,0.1)', borderWidth: 1, borderStyle: 'solid', borderColor: '#666', color: '#CCC' },
-  submitButton: { backgroundColor: '#6C63FF', borderWidth: 1, borderStyle: 'solid', borderColor: '#6C63FF', color: '#FFF' },
+  backButton: { background: '#F5F5F5', borderWidth: 1.5, borderStyle: 'solid', borderColor: '#E0E0E0', color: '#666' },
+  submitButton: { background: 'linear-gradient(135deg, #F5A623, #FF8C00)', borderWidth: 1.5, borderStyle: 'solid', borderColor: '#F5A623', color: '#FFF', boxShadow: '0 3px 12px rgba(245,166,35,0.3)' },
   disabledButton: { opacity: 0.35, cursor: 'not-allowed' },
   // Two-step voice email styles
-  stepHint: { color: '#8E8EA0', fontSize: 13, textAlign: 'center', margin: '4px 0', lineHeight: 1.4 },
-  stepIndicator: { color: '#6C63FF', fontSize: 14, fontWeight: 'bold', textAlign: 'center', margin: '6px 0' },
-  stepComplete: { color: '#4ADE80', fontSize: 14, textAlign: 'center', margin: '6px 0' },
+  stepHint: { color: '#888', fontSize: 13, textAlign: 'center', margin: '4px 0', lineHeight: 1.4 },
+  stepIndicator: { color: '#F5A623', fontSize: 13, fontWeight: 'bold', textAlign: 'center', margin: '6px 0' },
+  stepComplete: { color: '#4CAF50', fontSize: 13, textAlign: 'center', margin: '6px 0' },
   passwordActionRow: {
     width: '100%',
     display: 'flex',
@@ -688,13 +715,13 @@ const styles = {
     height: 36,
     padding: '0 14px',
     borderRadius: 10,
-    border: '1.5px solid #6C63FF',
-    background: 'rgba(108,99,255,0.08)',
-    color: '#6C63FF',
+    border: '1.5px solid #F5A623',
+    background: '#FFF8EE',
+    color: '#B07800',
     cursor: 'pointer',
     fontSize: 13,
     fontWeight: '600',
-    fontFamily: 'inherit',
+    fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
     display: 'flex',
     justifyContent: 'center',
     alignItems: 'center',

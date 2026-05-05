@@ -565,14 +565,17 @@ export default function RegisterScreen({ navigation }) {
   return (
     <GestureDetector gesture={composedGestures}>
       <View style={styles.container}>
-        <Text
-          style={styles.title}
-          accessible={true}
-          accessibilityLabel="Register screen"
-          accessibilityRole="header"
-        >
-          REGISTER
-        </Text>
+        <View style={{ alignItems: 'center', marginBottom: 4 }}>
+          <Text
+            style={styles.title}
+            accessible={true}
+            accessibilityLabel="Register screen"
+            accessibilityRole="header"
+          >
+            Create Account
+          </Text>
+          <Text style={styles.subtitle}>Join EyeDentify today</Text>
+        </View>
 
         {/* Mode Picker View */}
         {view === VIEW.MODE_PICKER && (
@@ -655,7 +658,7 @@ export default function RegisterScreen({ navigation }) {
                 accessibilityHint="Proceeds to email input"
                 onFocus={() => speakOnFocus('Next button. Proceeds to email input.')}
               >
-                <Text style={styles.actionButtonText}>Next →</Text>
+                <Text style={{ color: '#FFFFFF', fontSize: 16, fontWeight: '700' }}>Next →</Text>
               </TouchableOpacity>
             </View>
 
@@ -701,7 +704,7 @@ export default function RegisterScreen({ navigation }) {
                 accessibilityHint="Proceeds to password input"
                 onFocus={() => speakOnFocus('Next button. Proceeds to password input.')}
               >
-                <Text style={styles.actionButtonText}>Next →</Text>
+                <Text style={{ color: '#FFFFFF', fontSize: 16, fontWeight: '700' }}>Next →</Text>
               </TouchableOpacity>
             </View>
 
@@ -750,7 +753,7 @@ export default function RegisterScreen({ navigation }) {
                 {loading ? (
                   <ActivityIndicator color="#FFF" size="small" />
                 ) : (
-                  <Text style={styles.actionButtonText}>Register</Text>
+                  <Text style={{ color: '#FFFFFF', fontSize: 16, fontWeight: '700' }}>Register</Text>
                 )}
               </TouchableOpacity>
             </View>
@@ -777,101 +780,115 @@ export default function RegisterScreen({ navigation }) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#0A0A0F',
+    backgroundColor: '#F7F7F7',
     justifyContent: 'center',
     alignItems: 'center',
     padding: 20,
   },
   title: {
-    fontSize: 32,
-    fontWeight: 'bold',
-    color: '#FFFFFF',
-    marginBottom: 30,
-    letterSpacing: 1.5,
+    fontSize: 28,
+    fontWeight: '800',
+    color: '#222',
+    marginBottom: 6,
+    letterSpacing: -0.5,
   },
   modePicker: {
     width: '100%',
     alignItems: 'center',
   },
   instruction: {
-    color: '#8E8EA0',
-    fontSize: 18,
-    marginBottom: 30,
+    color: '#555',
+    fontSize: 17,
+    fontWeight: '600',
+    marginBottom: 24,
     textAlign: 'center',
   },
   modeButton: {
     width: '100%',
-    height: 70,
-    borderRadius: 14,
+    height: 58,
+    borderRadius: 16,
     justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: 15,
-    borderWidth: 2,
+    marginBottom: 12,
+    borderWidth: 1.5,
+    borderColor: '#EEE',
+    backgroundColor: '#FFFFFF',
   },
   audioButton: {
-    backgroundColor: 'rgba(76, 175, 80, 0.15)',
+    backgroundColor: '#F8FFF8',
     borderColor: '#4CAF50',
   },
   brailleButton: {
-    backgroundColor: 'rgba(108, 99, 255, 0.15)',
-    borderColor: '#6C63FF',
+    backgroundColor: '#F8F5FF',
+    borderColor: '#7C4DFF',
   },
   keyboardButton: {
-    backgroundColor: 'rgba(255, 193, 7, 0.15)',
-    borderColor: '#FFC107',
+    backgroundColor: '#FFF8EE',
+    borderColor: '#F5A623',
   },
   modeButtonText: {
-    color: '#FFFFFF',
-    fontSize: 22,
-    fontWeight: 'bold',
-    letterSpacing: 1.2,
+    color: '#333',
+    fontSize: 17,
+    fontWeight: '700',
+    letterSpacing: 0.3,
   },
   hint: {
-    color: '#666',
-    fontSize: 14,
+    color: '#AAA',
+    fontSize: 13,
     textAlign: 'center',
-    marginTop: 20,
+    marginTop: 18,
     lineHeight: 20,
   },
   inputArea: {
     width: '100%',
     alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 22,
+    paddingVertical: 28,
+    paddingHorizontal: 24,
+    borderWidth: 1,
+    borderColor: '#EEE',
   },
   label: {
-    color: '#FFFFFF',
-    fontSize: 20,
+    color: '#222',
+    fontSize: 17,
     marginBottom: 10,
-    fontWeight: '600',
+    fontWeight: '700',
+    alignSelf: 'flex-start',
   },
   modeIndicator: {
-    color: '#6C63FF',
-    fontSize: 16,
-    marginBottom: 20,
-    fontWeight: 'bold',
+    color: '#F5A623',
+    fontSize: 13,
+    marginBottom: 18,
+    fontWeight: '700',
+    alignSelf: 'flex-start',
+    textTransform: 'uppercase',
+    letterSpacing: 0.6,
   },
   textInput: {
     width: '100%',
-    height: 55,
-    backgroundColor: '#1A1A24',
+    height: 52,
+    backgroundColor: '#F5F5F5',
     borderRadius: 12,
-    paddingHorizontal: 18,
-    color: '#FFFFFF',
-    fontSize: 17,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    color: '#222',
+    fontSize: 16,
     borderWidth: 1.5,
-    borderColor: '#2A2A38',
-    marginBottom: 20,
+    borderColor: '#EEE',
+    marginBottom: 16,
   },
   audioStatus: {
     width: '100%',
-    backgroundColor: 'rgba(76, 175, 80, 0.1)',
-    borderRadius: 12,
+    backgroundColor: '#F8FFF8',
+    borderRadius: 14,
     borderWidth: 1.5,
     borderColor: '#4CAF50',
     justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: 20,
+    marginBottom: 18,
     paddingHorizontal: 15,
-    paddingVertical: 12,
+    paddingVertical: 14,
   },
   audioStatusInner: {
     flexDirection: 'row',
@@ -880,13 +897,13 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
   audioStatusText: {
-    color: '#4CAF50',
-    fontSize: 16,
+    color: '#2E7D32',
+    fontSize: 15,
     fontWeight: '600',
     marginRight: 10,
   },
   audioStatusDone: {
-    color: '#4ADE80',
+    color: '#2E7D32',
   },
   audioSpinner: {
     marginLeft: 10,
@@ -899,18 +916,18 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   audioStopButtonActive: {
-    backgroundColor: 'rgba(255, 68, 68, 0.2)',
-    borderColor: '#FF4444',
+    backgroundColor: '#FFF0EE',
+    borderColor: '#D94A4A',
     borderWidth: 1.5,
   },
   audioProcessingButton: {
-    backgroundColor: 'rgba(255, 152, 0, 0.15)',
-    borderColor: '#FF9800',
+    backgroundColor: '#FFF8EE',
+    borderColor: '#F5A623',
     borderWidth: 1.5,
   },
   audioReRecordButton: {
-    backgroundColor: 'rgba(108, 99, 255, 0.15)',
-    borderColor: '#6C63FF',
+    backgroundColor: '#F8F5FF',
+    borderColor: '#7C4DFF',
     borderWidth: 1.5,
   },
   audioStopButtonText: {
@@ -919,9 +936,9 @@ const styles = StyleSheet.create({
     letterSpacing: 1,
   },
   emailPreview: {
-    color: '#8E8EA0',
-    fontSize: 16,
-    marginBottom: 25,
+    color: '#888',
+    fontSize: 14,
+    marginBottom: 18,
     textAlign: 'center',
     paddingHorizontal: 10,
   },
@@ -929,33 +946,41 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     width: '100%',
-    marginBottom: 20,
+    marginBottom: 18,
   },
   actionButton: {
     flex: 1,
-    height: 55,
-    borderRadius: 12,
+    height: 50,
+    borderRadius: 14,
     justifyContent: 'center',
     alignItems: 'center',
     marginHorizontal: 5,
   },
   backButton: {
-    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    backgroundColor: '#F5F5F5',
     borderWidth: 1.5,
-    borderColor: '#666',
+    borderColor: '#E0E0E0',
   },
   submitButton: {
-    backgroundColor: '#6C63FF',
+    backgroundColor: '#F5A623',
     borderWidth: 1.5,
-    borderColor: '#6C63FF',
+    borderColor: '#F5A623',
   },
   disabledButton: {
-    opacity: 0.5,
+    opacity: 0.4,
   },
   actionButtonText: {
+    color: '#333',
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  submitButtonText: {
     color: '#FFFFFF',
     fontSize: 16,
-    fontWeight: 'bold',
+    fontWeight: '700',
+  },
+  disabledButtonText: {
+    color: '#AAA',
   },
   speakButton: {
     width: '100%',
@@ -978,7 +1003,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     width: '100%',
-    marginBottom: 20,
+    marginBottom: 16,
   },
   textInputWithIcon: {
     flex: 1,
@@ -996,8 +1021,8 @@ const styles = StyleSheet.create({
     fontSize: 20,
   },
   gestureHint: {
-    color: '#666',
-    fontSize: 13,
+    color: '#AAA',
+    fontSize: 12,
     textAlign: 'center',
     lineHeight: 18,
     marginTop: 10,
@@ -1008,14 +1033,15 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
-    backgroundColor: 'rgba(10, 10, 15, 0.8)',
+    backgroundColor: 'rgba(247,247,247,0.9)',
     justifyContent: 'center',
     alignItems: 'center',
   },
   loadingText: {
-    color: '#FFFFFF',
+    color: '#444',
     fontSize: 16,
     marginTop: 15,
+    fontWeight: '500',
   },
   // Audio mode - editable input after transcription
   audioEditContainer: {

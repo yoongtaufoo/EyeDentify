@@ -1,6 +1,8 @@
 /**
  * ChatScreen.js - Main chat interface for EyeDentify
  *
+ * LIGHT THEME UI - Matches website style (white bg, warm accent colors)
+ *
  * DUAL-VIEW ARCHITECTURE:
  *   1) Chat History View (default) - messages, text input, audio recording
  *   2) Camera View - live camera preview, double-tap to capture
@@ -8,14 +10,16 @@
  * GESTURE MAP:
  *   ──────────────────────────────────────────────────────
  *   CHAT VIEW:
- *     • Tap LEFT edge (left 25%)    → Switch to Camera View
- *     • Long-press mic button       → Record audio (release to send)
+ *     • Tap LEFT edge (left 25%)    → Toggle Camera View (open/close)
+ *     • Swipe LEFT                  → Go to Memories tab
+ *     • Swipe RIGHT                 → Go to Home tab
  *     • Two-finger double-tap       → Logout
+ *     • Long-press mic button       → Record audio (release to send)
  *     • Type text + tap Send         → Send text message
  *
  *   CAMERA VIEW:
  *     • Double-tap anywhere          → Take photo → AI process → back to Chat
- *     · Swipe right                  → Back to Chat History (no photo)
+ *     • Tap left edge                → Close camera → back to Chat
  *   ──────────────────────────────────────────────────────
  *
  * ACCESSIBILITY: Full TalkBack/VoiceOver support, Speech announcements.
@@ -66,7 +70,7 @@ const speakOnFocus = (message) => {
 // ============================================================
 // MAIN COMPONENT
 // ============================================================
-export default function ChatScreen() {
+export default function ChatScreen({ navigation }) {
   const { user, signOut } = useAuth();
 
   // ---- View state ----
@@ -116,7 +120,8 @@ export default function ChatScreen() {
       setHasWelcomed(true);
       const greeting = `Welcome back, ${userFullName}. EyeDentify ready.`;
       const gestures =
-        'Gesture guide. Tap the left side of the screen to open camera. ' +
+        'Gesture guide. Tap the left side of screen to open or close camera. ' +
+        'Swipe left to go to Memories. Swipe right to go to Home. ' +
         'Hold the microphone button to record and send a voice message. ' +
         'Two-finger double-tap anywhere to log out.';
       Speech.speak(greeting, { rate: 0.9 });
@@ -132,8 +137,6 @@ export default function ChatScreen() {
       }, 150);
     }
   }, [messages]);
-
-  // Track keyboard height for Android (pan mode handles this natively now)
 
   // ============================================================
   // DATA LOADING
@@ -153,26 +156,21 @@ export default function ChatScreen() {
       }));
       setMessages(formatted);
     } else if (history === null) {
-      // null means the backend was unreachable (network error / server crash)
-      // Show a fallback message so the app is still usable locally
       setMessages([{ 
         id: 'welcome', 
         role: 'assistant', 
         content: "I couldn't reach my brain, but I'm still here to help locally." 
       }]);
     }
-    // else: history is [] (empty array) — new user with no messages yet, show blank chat
     setLoading(false);
   };
 
   const fetchUserProfile = async () => {
-    // Get full_name from Supabase auth user metadata or profiles table
     const meta = user?.user_metadata;
     if (meta?.full_name) {
       setUserFullName(meta.full_name);
       return;
     }
-    // Fallback: try extracting from email
     if (user?.email) {
       const namePart = user.email.split('@')[0];
       setUserFullName(namePart.charAt(0).toUpperCase() + namePart.slice(1));
@@ -265,14 +263,12 @@ export default function ChatScreen() {
   };
 
   // ============================================================
-  // AUDIO RECORDING (Tap to start → Tap to stop — no auto-stop)
+  // AUDIO RECORDING
   // ============================================================
   const toggleRecording = async () => {
     if (isRecording) {
-      // --- STOP ---
       await stopRecordingAndSend();
     } else {
-      // --- START ---
       await startRecording();
     }
   };
@@ -287,21 +283,17 @@ export default function ChatScreen() {
 
       await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
 
-      // Speak "Recording..." first — WAIT for it to finish before capturing mic
       Speech.speak('Recording...');
-      // Haptic feedback
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
       setTimeout(() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium), 200);
 
-      // Wait for TTS to finish so we don't record our own "Recording..." announcement
       await new Promise((r) => setTimeout(r, 200));
       let attempts = 0;
       while (await Speech.isSpeakingAsync()) {
         await new Promise((r) => setTimeout(r, 150));
-        if (attempts++ > 80) break; // safety timeout ~12s
+        if (attempts++ > 80) break;
       }
 
-      // NOW start recording — after TTS is done
       await recorder.prepareToRecordAsync();
       recorder.record();
       setIsRecording(true);
@@ -325,7 +317,6 @@ export default function ChatScreen() {
       if (uri) {
         const base64 = await FileSystem.readAsStringAsync(uri, { encoding: 'base64' });
 
-        // Show voice message placeholder
         const voiceMsg = {
           id: `voice-${Date.now()}`,
           role: 'user',
@@ -337,10 +328,8 @@ export default function ChatScreen() {
 
         Speech.speak('Processing audio.');
 
-        // Send to backend for transcription + AI response
         const result = await sendAudioMessage(user.id, base64);
 
-        // Update bubble with transcribed text + show detected text above Play Voice
         if (result?.audio_text) {
           setMessages((prev) =>
             prev.map((msg) =>
@@ -421,10 +410,9 @@ export default function ChatScreen() {
   // ============================================================
   const handleLogout = async () => {
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    Speech.speak('Logging out.');
     try {
-      if (signOut) {
-        await signOut();
-      }
+      if (signOut) await signOut();
     } catch (e) {
       console.error('Logout error:', e);
     }
@@ -436,12 +424,24 @@ export default function ChatScreen() {
   const goToCamera = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     setViewMode(VIEW.CAMERA);
-    Speech.speak('Camera view. Double-tap to take a picture. Swipe right to go back.');
+    Speech.speak('Camera view. Double-tap to take a picture. Tap left side to close.');
   };
 
-  const goToChat = () => {
+  const goToChatFromCamera = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     setViewMode(VIEW.CHAT);
+  };
+
+  const goToMemories = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    navigation.navigate('Memories');
+    Speech.speak('Switching to Memories.');
+  };
+
+  const goToHome = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    navigation.navigate('Home');
+    Speech.speak('Switching to Home.');
   };
 
   // ============================================================
@@ -450,12 +450,11 @@ export default function ChatScreen() {
 
   // --- CHAT VIEW GESTURES ---
 
-  // 1) Tap left edge → Go to camera
+  // 1) Tap left edge → Toggle camera (open or close)
   const screenWidth = Dimensions.get('window').width;
   const chatTapLeftEdge = Gesture.Tap()
     .numberOfTaps(1)
     .onEnd((e) => {
-      // Trigger if tap is in left 25%
       if (e.x < screenWidth * 0.25) {
         goToCamera();
       }
@@ -465,109 +464,52 @@ export default function ChatScreen() {
   // 2) Two-finger double-tap → Logout
   const chatTwoFingerDoubleTap = Gesture.Tap()
     .numberOfTaps(2)
-    .minPointers(2) // FIXED: Changed from .numberOfTouches(2)
-    .onEnd(() => {
-      Speech.speak('Logging out.');
-      handleLogout();
-    })
+    .minPointers(2)
+    .onEnd(() => { handleLogout(); })
     .runOnJS(true);
 
-  // 3) Tap mic button → Start/Stop recording
-  //    (No long-press needed — toggle via onPress)
+  // 3) Swipe LEFT → Go to Memories tab
+  const chatSwipeLeft = Gesture.Fling()
+    .direction(Directions.LEFT)
+    .onEnd(() => { goToMemories(); })
+    .runOnJS(true);
+
+  // 4) Swipe RIGHT → Go to Home tab
+  const chatSwipeRight = Gesture.Fling()
+    .direction(Directions.RIGHT)
+    .onEnd(() => { goToHome(); })
+    .runOnJS(true);
 
   // --- CAMERA VIEW GESTURES ---
 
   // 1) Double-tap → Capture photo
-  const cameraDoubleTap = Gesture.Tap() // FIXED: Changed from Gesture.DoubleTap()
+  const cameraDoubleTap = Gesture.Tap()
     .numberOfTaps(2)
-    .onEnd(() => {
-      handleCaptureAndProcess();
+    .onEnd(() => { handleCaptureAndProcess(); })
+    .runOnJS(true);
+
+  // 2) Tap left edge → Close camera
+  const cameraTapLeft = Gesture.Tap()
+    .numberOfTaps(1)
+    .onEnd((e) => {
+      if (e.x < screenWidth * 0.25) {
+        goToChatFromCamera();
+      }
     })
     .runOnJS(true);
 
-  // 2) Swipe right → Back to chat
-  const cameraSwipeRight = Gesture.Fling()
-    .direction(Directions.RIGHT)
-    .onEnd(() => {
-      goToChat();
-    })
-    .runOnJS(true);
-
-  // Combine them using Exclusive so they don't fight each other
+  // Compose chat gestures — two-finger DT has highest priority, then flings/swipes, then tap
   const chatCompositeGesture = Gesture.Exclusive(
     chatTwoFingerDoubleTap,
-    chatTapLeftEdge
+    chatSwipeLeft,
+    chatSwipeRight,
+    chatTapLeftEdge,
   );
 
   const cameraCompositeGesture = Gesture.Exclusive(
     cameraDoubleTap,
-    cameraSwipeRight
+    cameraTapLeft,
   );
-
-  // // --- CHAT VIEW GESTURES ---
-
-  // // 1) Tap left edge (left 25% of screen width) → Go to camera
-  // const screenWidth = Dimensions.get('window').width;
-  // const chatTapLeftEdge = Gesture.Tap()
-  //   .numberOfTaps(1)
-  //   .onEnd((e) => {
-  //     // Only trigger if tap is in left 25%
-  //     if (e.x < screenWidth * 0.25) {
-  //       goToCamera();
-  //     }
-  //   })
-  //   .runOnJS(true);
-
-  // // 2) Long press on record button area (bottom-right zone) → Record audio
-  // // We'll use a separate gesture detector specifically over the mic button
-  // const chatLongPressRecord = Gesture.LongPress()
-  //   .minDuration(300)
-  //   .onStart(() => {
-  //     startRecording();
-  //   })
-  //   .onEnd(() => {
-  //     stopRecordingAndSend();
-  //   })
-  //   .runOnJS(true);
-
-  // // 3) Two-finger double-tap → Logout (special gesture)
-  // const chatTwoFingerDoubleTap = Gesture.Tap()
-  //   .numberOfTaps(2)
-  //   .minPointers(2)
-  //   .onEnd(() => {
-  //     Speech.speak('Logging out.');
-  //     handleLogout();
-  //   })
-  //   .runOnJS(true);
-
-  // // Compose chat gestures: logout has highest priority, then left-edge tap, then long-press (for mic button area only)
-  // const chatCompositeGesture = Gesture.Race(
-  //   chatTwoFingerDoubleTap,
-  //   chatTapLeftEdge,
-  // );
-
-  // // --- CAMERA VIEW GESTURES ---
-
-  // // 1) Double-tap → Capture photo
-  // const cameraDoubleTap = Gesture.Tap()
-  //   .numberOfTaps(2)
-  //   .onEnd(() => {
-  //     handleCaptureAndProcess();
-  //   })
-  //   .runOnJS(true);
-
-  // // 2) Swipe right → Back to chat
-  // const cameraSwipeRight = Gesture.Fling()
-  //   .direction(Directions.RIGHT)
-  //   .onEnd(() => {
-  //     goToChat();
-  //   })
-  //   .runOnJS(true);
-
-  // const cameraCompositeGesture = RaceOrExclusive(
-  //   cameraDoubleTap,
-  //   cameraSwipeRight,
-  // );
 
   // ============================================================
   // CAMERA PERMISSION CHECK
@@ -575,7 +517,7 @@ export default function ChatScreen() {
   if (!permission) {
     return (
       <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color="#6C63FF" />
+        <ActivityIndicator size="large" color="#F5A623" />
       </View>
     );
   }
@@ -625,22 +567,13 @@ export default function ChatScreen() {
     if (item.isProcessingPlaceholder) {
       return (
         <View style={[styles.messageBubble, styles.processingBubble]}>
-          <ActivityIndicator size="small" color="#6C63FF" />
+          <ActivityIndicator size="small" color="#F5A623" />
           <Text style={styles.processingText}>{item.content}</Text>
         </View>
       );
     }
 
     return (
-      // <View
-      //   style={[
-      //     styles.messageBubble,
-      //     isUser ? styles.userBubble : styles.assistantBubble,
-      //   ]}
-      //   accessible={true}
-      //   accessibilityLabel={`${isUser ? 'You' : 'EyeDentify'}: ${item.content}`}
-      //   accessibilityRole="article"
-      // >
       <View
         style={[
           styles.messageBubble,
@@ -648,7 +581,6 @@ export default function ChatScreen() {
         ]}
         accessible={true}
         accessibilityLabel={`${isUser ? 'You' : 'EyeDentify'}: ${item.content}`}
-        // FIX: Change "article" to "text" or remove it entirely
         accessibilityRole="text" 
       >
         {/* Show captured image thumbnail for user image captures */}
@@ -721,26 +653,21 @@ export default function ChatScreen() {
       {viewMode === VIEW.CHAT && (
         <GestureDetector gesture={chatCompositeGesture}>
           <SafeAreaView style={styles.chatContainer} edges={['top', 'bottom']}>
-            {/* Header */}
+            {/* Header - matches web light theme */}
             <View style={styles.header}>
-              <View style={styles.headerLeft}>
-                <Text style={styles.appTitle}>EyeDentify</Text>
-                <Text style={styles.headerHint}>2-finger double-tap to logout</Text>
+              <View style={styles.logoSection}>
+                <View style={styles.logoIcon}>
+                  <Text style={styles.logoIconText}>{'\u{1F441}\uFE0F'}</Text>
+                </View>
+                <View>
+                  <Text style={styles.logoText}>EyeDentify</Text>
+                  <Text style={styles.logoSubtext}>AI CHAT</Text>
+                </View>
               </View>
-              <TouchableOpacity
-                onPress={handleLogout}
-                style={styles.logoutButton}
-                accessible={true}
-                focusable={true}
-                accessibilityLabel="Logout button"
-                accessibilityHint="Double tap to log out"
-                onFocus={() => speakOnFocus('Logout button. Double tap to log out.')}
-              >
-                <Text style={styles.logoutText}>Logout</Text>
-              </TouchableOpacity>
+              <Text style={styles.headerHint}>2-finger double-tap to logout</Text>
             </View>
 
-            {/* Messages + Input — keyboard height pushes content up */}
+            {/* Messages + Input */}
             <View style={{ flex: 1 }}>
               {/* Messages List */}
               <View style={styles.messagesArea}>
@@ -755,12 +682,12 @@ export default function ChatScreen() {
                 accessibilityLabel="Chat messages"
                 ListEmptyComponent={
                   <View style={styles.emptyContainer}>
+                    <Text style={styles.emptyIcon}>{'\u{1F441}\uFE0F'}</Text>
+                    <Text style={styles.emptyTitle}>Welcome to EyeDentify</Text>
                     <Text style={styles.emptyText}>
-                      No messages yet. Tap the left side of screen to open camera and capture something!
+                      Your AI vision assistant is ready to help you identify objects, read text, describe scenes, and more.
                     </Text>
-                    <Text style={styles.emptyHint}>
-                      Or type a message below to chat with EyeDentify.
-                    </Text>
+                    <Text style={styles.emptyHint}>Tap the left side of screen to open camera!</Text>
                   </View>
                 }
               />
@@ -768,7 +695,7 @@ export default function ChatScreen() {
               {/* Loading / Thinking indicator */}
               {(loading || isRecording) && (
                 <View style={styles.typingIndicator}>
-                  <ActivityIndicator size="small" color="#6C63FF" />
+                  <ActivityIndicator size="small" color="#F5A623" />
                   <Text style={styles.typingText}>
                     {isRecording ? 'Listening...' : 'Thinking...'}
                   </Text>
@@ -776,98 +703,98 @@ export default function ChatScreen() {
               )}
             </View>
 
-            {/* Bottom Input Bar */}
+            {/* Bottom Input Bar - light theme like web */}
             <View style={styles.bottomBar}>
-                {/* Left edge hint */}
-                <TouchableOpacity
-                  style={styles.cameraHintButton}
-                  onPress={goToCamera}
-                  activeOpacity={0.7}
-                  accessible={true}
-                  focusable={true}
-                  accessibilityRole="button"
-                  accessibilityLabel="Camera button"
-                  accessibilityHint="Tap to open camera and take a photo"
-                  onFocus={() => speakOnFocus('Camera button. Tap to open camera and take a photo.')}
-                >
-                  <Text style={styles.cameraIcon}>📷</Text>
-                </TouchableOpacity>
+              {/* Left edge hint - camera toggle */}
+              <TouchableOpacity
+                style={styles.cameraHintButton}
+                onPress={goToCamera}
+                activeOpacity={0.7}
+                accessible={true}
+                focusable={true}
+                accessibilityRole="button"
+                accessibilityLabel="Toggle camera"
+                accessibilityHint="Tap to open camera and take a photo"
+                onFocus={() => speakOnFocus('Camera button. Tap to open camera and take a photo.')}
+              >
+                <Text style={styles.cameraIcon}>📷</Text>
+              </TouchableOpacity>
 
-                {/* Text Input */}
-                <TextInput
-                  style={styles.textInput}
-                  value={inputText}
-                  onChangeText={setInputText}
-                  placeholder="Ask anything..."
-                  placeholderTextColor="#666"
-                  editable={!loading}
-                  maxLength={500}
-                  returnKeyType="send"
-                  onSubmitEditing={handleSendText}
-                  blurOnSubmit={false}
-                  accessible={true}
-                  accessibilityLabel="Message input"
-                  accessibilityHint="Type your question and press enter to send"
-                  onFocus={() => speakOnFocus('Message input. Type your question and press enter to send.')}
-                />
+              {/* Text Input */}
+              <TextInput
+                style={styles.textInput}
+                value={inputText}
+                onChangeText={setInputText}
+                placeholder="Ask anything..."
+                placeholderTextColor="#999"
+                editable={!loading}
+                maxLength={500}
+                returnKeyType="send"
+                onSubmitEditing={handleSendText}
+                blurOnSubmit={false}
+                accessible={true}
+                accessibilityLabel="Message input"
+                accessibilityHint="Type your question and press enter to send"
+                onFocus={() => speakOnFocus('Message input. Type your question and press enter to send.')}
+              />
 
-                {/* Tap to Record / Stop Button */}
-                <TouchableOpacity
-                  style={[
-                    styles.recordButton,
-                    isRecording ? styles.recordButtonActive : styles.recordButtonReady,
-                  ]}
-                  onPress={toggleRecording}
-                  disabled={loading}
-                  activeOpacity={0.7}
-                  accessible={true}
-                  focusable={true}
-                  accessibilityRole="button"
-                  accessibilityLabel={
-                    isRecording
-                      ? 'Stop recording button'
-                      : 'Voice record button'
-                  }
-                  accessibilityHint={
-                    isRecording
-                      ? 'Tap to stop recording and send'
-                      : 'Tap to start recording a voice message'
-                  }
-                  onFocus={() => speakOnFocus(isRecording
-                    ? 'Stop button. Tap to stop recording and send.'
-                    : 'Voice record button. Tap to start recording a voice message.')}
-                >
-                  <Text style={styles.recordButtonText}>
-                    {isRecording ? '■ STOP' : '🎤'}
-                  </Text>
-                </TouchableOpacity>
-
-                {/* Send Button */}
-                <TouchableOpacity
-                  style={[
-                    styles.sendButton,
-                    (!inputText.trim() || loading) && styles.sendButtonDisabled,
-                  ]}
-                  onPress={handleSendText}
-                  disabled={!inputText.trim() || loading}
-                  activeOpacity={0.7}
-                  accessible={true}
-                  accessibilityRole="button"
-                  accessibilityLabel="Send message"
-                  accessibilityHint="Tap to send your typed message"
-                >
-                  <Text style={styles.sendButtonText}>→</Text>
-                </TouchableOpacity>
-              </View>
-
-              {/* Gesture guide bar at very bottom */}
-              <View style={styles.guideBar}>
-                <Text style={styles.guideText}>
-                  ← Tap left: Camera &nbsp;|&nbsp; 🎤 Hold: Talk &nbsp;|&nbsp; 👆👆 2-finger: Logout
+              {/* Tap to Record / Stop Button */}
+              <TouchableOpacity
+                style={[
+                  styles.recordButton,
+                  isRecording ? styles.recordButtonActive : styles.recordButtonReady,
+                ]}
+                onPress={toggleRecording}
+                disabled={loading}
+                activeOpacity={0.7}
+                accessible={true}
+                focusable={true}
+                accessibilityRole="button"
+                accessibilityLabel={
+                  isRecording
+                    ? 'Stop recording button'
+                    : 'Voice record button'
+                }
+                accessibilityHint={
+                  isRecording
+                    ? 'Tap to stop recording and send'
+                    : 'Tap to start recording a voice message'
+                }
+                onFocus={() => speakOnFocus(isRecording
+                  ? 'Stop button. Tap to stop recording and send.'
+                  : 'Voice record button. Tap to start recording a voice message.')}
+              >
+                <Text style={styles.recordButtonText}>
+                  {isRecording ? '■ STOP' : '🎤'}
                 </Text>
-              </View>
+              </TouchableOpacity>
+
+              {/* Send Button - warm orange gradient like web */}
+              <TouchableOpacity
+                style={[
+                  styles.sendButton,
+                  (!inputText.trim() || loading) && styles.sendButtonDisabled,
+                ]}
+                onPress={handleSendText}
+                disabled={!inputText.trim() || loading}
+                activeOpacity={0.7}
+                accessible={true}
+                accessibilityRole="button"
+                accessibilityLabel="Send message"
+                accessibilityHint="Tap to send your typed message"
+              >
+                <Text style={[styles.sendButtonText, (!inputText.trim() || loading) && styles.sendButtonTextDisabled]}>→</Text>
+              </TouchableOpacity>
             </View>
-          </SafeAreaView>
+
+            {/* Gesture guide bar at very bottom */}
+            <View style={styles.guideBar}>
+              <Text style={styles.guideText}>
+                ← Tap left: Camera &nbsp;|&nbsp; 🎤 Tap: Talk &nbsp;|&nbsp; 👆👆 2-finger: Logout &nbsp;|&nbsp; ↔️ Swipe: Tabs
+              </Text>
+            </View>
+          </View>
+        </SafeAreaView>
         </GestureDetector>
       )}
 
@@ -882,12 +809,12 @@ export default function ChatScreen() {
               mute={false}
             />
 
-            {/* Camera UI Overlay */}
+            {/* Camera UI Overlay - light themed hints */}
             <View style={styles.cameraOverlay} pointerEvents="box-none">
               {/* Top instruction bar */}
               <View style={styles.cameraTopBar}>
                 <Text style={styles.cameraInstruction}>
-                  Double-tap to capture &nbsp;|&nbsp; Swipe right → Back
+                  Double-tap to capture &nbsp;|&nbsp; Tap left to close
                 </Text>
               </View>
 
@@ -904,16 +831,16 @@ export default function ChatScreen() {
               {/* Processing overlay */}
               {isProcessingImage && (
                 <View style={styles.processingOverlay}>
-                  <ActivityIndicator size="large" color="#FFF" />
+                  <ActivityIndicator size="large" color="#F5A623" />
                   <Text style={styles.processingOverlayText}>
                     Analyzing image...
                   </Text>
                 </View>
               )}
 
-              {/* Bottom swipe-back hint */}
+              {/* Bottom hint */}
               <View style={styles.cameraBottomHint}>
-                <Text style={styles.swipeBackText}>← Swipe right to go back →</Text>
+                <Text style={styles.swipeBackText}>← Tap left side to close →</Text>
               </View>
             </View>
           </View>
@@ -924,28 +851,19 @@ export default function ChatScreen() {
 }
 
 // ============================================================
-// HELPER: RaceOrExclusive - combine gestures properly
-// For RNGH v2+, we need to handle gesture composition carefully
-// ============================================================
-function RaceOrExclusive(...gestures) {
-  // Use Exclusive to prevent multiple gestures firing simultaneously
-  return Gesture.Exclusive(...gestures);
-}
-
-// ============================================================
-// STYLES
+// STYLES - LIGHT THEME (matches website UI)
 // ============================================================
 const styles = StyleSheet.create({
   // ---- Shared ----
   container: {
     flex: 1,
-    backgroundColor: '#0A0A0F',
+    backgroundColor: '#F7F7F7',
   },
   loadingContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#0A0A0F',
+    backgroundColor: '#F7F7F7',
   },
 
   // ---- Permission Screen ----
@@ -954,18 +872,18 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     paddingHorizontal: 30,
-    backgroundColor: '#0A0A0F',
+    backgroundColor: '#F7F7F7',
   },
   permissionTitle: {
     fontSize: 24,
     fontWeight: 'bold',
-    color: '#FFF',
+    color: '#222',
     marginBottom: 16,
     textAlign: 'center',
   },
   permissionText: {
     fontSize: 15,
-    color: '#8E8EA0',
+    color: '#666',
     textAlign: 'center',
     lineHeight: 22,
     marginBottom: 28,
@@ -974,7 +892,7 @@ const styles = StyleSheet.create({
     marginBottom: 14,
   },
   permissionButton: {
-    backgroundColor: '#6C63FF',
+    backgroundColor: '#F5A623',
     paddingHorizontal: 32,
     paddingVertical: 14,
     borderRadius: 12,
@@ -989,51 +907,58 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
   },
   skipButtonText: {
-    color: '#6C63FF',
+    color: '#F5A623',
     fontSize: 15,
     fontWeight: '600',
   },
 
-  // ---- Chat View ----
+  // ---- Chat View - Light Theme ----
   chatContainer: {
     flex: 1,
-    backgroundColor: '#0A0A0F',
+    backgroundColor: '#F7F7F7',
   },
   header: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: 16,
+    justifyContent: 'space-between',
+    paddingHorizontal: 18,
     paddingTop: 8,
     paddingBottom: 10,
-    backgroundColor: 'rgba(108,99,255,0.08)',
+    backgroundColor: '#FFFFFF',
     borderBottomWidth: 1,
-    borderBottomColor: 'rgba(108,99,255,0.15)',
+    borderBottomColor: '#EEE',
   },
-  headerLeft: {},
-  appTitle: {
-    color: '#6C63FF',
-    fontSize: 20,
-    fontWeight: 'bold',
-    letterSpacing: 1.5,
+  logoSection: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  logoIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    backgroundColor: '#F5A623',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  logoIconText: {
+    fontSize: 18,
+  },
+  logoText: {
+    fontSize: 17,
+    fontWeight: '800',
+    color: '#222',
+  },
+  logoSubtext: {
+    fontSize: 10,
+    color: '#F5A623',
+    fontWeight: '700',
+    letterSpacing: 0.6,
   },
   headerHint: {
-    color: '#555',
+    color: '#AAA',
     fontSize: 11,
     marginTop: 2,
-  },
-  logoutButton: {
-    backgroundColor: 'rgba(255,60,60,0.15)',
-    paddingHorizontal: 14,
-    paddingVertical: 7,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: 'rgba(255,60,60,0.35)',
-  },
-  logoutText: {
-    color: '#FF6B6B',
-    fontSize: 13,
-    fontWeight: '700',
   },
 
   // Messages area
@@ -1051,21 +976,33 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingTop: 80,
   },
-  emptyText: {
-    color: '#666',
-    fontSize: 15,
+  emptyIcon: {
+    fontSize: 44,
+    marginBottom: 14,
+    opacity: 0.45,
+  },
+  emptyTitle: {
+    fontSize: 19,
+    fontWeight: '700',
+    color: '#999',
+    marginBottom: 8,
     textAlign: 'center',
-    lineHeight: 24,
-    paddingHorizontal: 20,
+  },
+  emptyText: {
+    color: '#AAA',
+    fontSize: 13.5,
+    lineHeight: 22,
+    textAlign: 'center',
+    maxWidth: 300,
+    marginBottom: 4,
   },
   emptyHint: {
-    color: '#444',
-    fontSize: 13,
+    color: '#BBB',
+    fontSize: 12,
     textAlign: 'center',
-    marginTop: 8,
   },
 
-  // Message bubbles
+  // Message bubbles - light theme
   messageBubble: {
     maxWidth: '82%',
     paddingVertical: 10,
@@ -1075,25 +1012,27 @@ const styles = StyleSheet.create({
   },
   userBubble: {
     alignSelf: 'flex-end',
-    backgroundColor: '#6C63FF',
-    borderBottomRightRadius: 4,
+    backgroundColor: '#F0F0F0',
+    borderBottomRightRadius: 6,
   },
   assistantBubble: {
     alignSelf: 'flex-start',
-    backgroundColor: 'rgba(30,30,45,0.95)',
-    borderBottomLeftRadius: 4,
+    backgroundColor: '#FDF3D8',
+    borderBottomLeftRadius: 6,
+    borderWidth: 1,
+    borderColor: 'rgba(245,166,35,0.15)',
   },
   processingBubble: {
     alignSelf: 'flex-start',
-    backgroundColor: 'rgba(108,99,255,0.12)',
+    backgroundColor: '#FFF8EE',
     borderWidth: 1,
-    borderColor: 'rgba(108,99,255,0.25)',
+    borderColor: 'rgba(245,166,35,0.25)',
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 16,
   },
   processingText: {
-    color: '#6C63FF',
+    color: '#F5A623',
     fontSize: 13,
     fontStyle: 'italic',
     marginLeft: 8,
@@ -1110,10 +1049,10 @@ const styles = StyleSheet.create({
     lineHeight: 21,
   },
   userText: {
-    color: '#FFF',
+    color: '#222',
   },
   assistantText: {
-    color: '#E0E0E0',
+    color: '#333',
   },
   objectsText: {
     color: '#AAA',
@@ -1123,20 +1062,20 @@ const styles = StyleSheet.create({
   },
   timestamp: {
     fontSize: 10,
-    color: 'rgba(255,255,255,0.25)',
+    color: '#CCC',
     marginTop: 4,
     textAlign: 'right',
   },
   voicePlayButton: {
     marginTop: 8,
-    backgroundColor: 'rgba(255,255,255,0.08)',
+    backgroundColor: 'rgba(245,166,35,0.15)',
     paddingVertical: 8,
     paddingHorizontal: 12,
     borderRadius: 10,
     alignSelf: 'flex-start',
   },
   voicePlayText: {
-    color: '#FFF',
+    color: '#B8860B',
     fontSize: 14,
     fontWeight: '600',
   },
@@ -1144,14 +1083,14 @@ const styles = StyleSheet.create({
     marginTop: 8,
     paddingVertical: 8,
     paddingHorizontal: 12,
-    backgroundColor: 'rgba(108,99,255,0.15)',
+    backgroundColor: 'rgba(245,166,35,0.1)',
     borderRadius: 10,
     alignSelf: 'flex-start',
     borderWidth: 1,
-    borderColor: 'rgba(108,99,255,0.3)',
+    borderColor: 'rgba(245,166,35,0.2)',
   },
   transcribedTextLabel: {
-    color: '#6C63FF',
+    color: '#F5A623',
     fontSize: 11,
     fontWeight: '700',
     textTransform: 'uppercase',
@@ -1159,7 +1098,7 @@ const styles = StyleSheet.create({
     marginBottom: 2,
   },
   transcribedTextValue: {
-    color: '#E0E0E0',
+    color: '#555',
     fontSize: 14,
     lineHeight: 20,
   },
@@ -1172,28 +1111,30 @@ const styles = StyleSheet.create({
     paddingLeft: 14,
   },
   typingText: {
-    color: '#8E8EA0',
+    color: '#888',
     fontSize: 13,
     marginLeft: 8,
     fontStyle: 'italic',
   },
 
-  // Bottom input bar
+  // Bottom input bar - light theme
   bottomBar: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 8,
-    paddingBottom: 6,
+    paddingBottom: 4,
     paddingTop: 6,
-    backgroundColor: 'rgba(0,0,0,0.85)',
+    backgroundColor: '#FFFFFF',
     borderTopWidth: 1,
-    borderTopColor: 'rgba(255,255,255,0.06)',
+    borderTopColor: '#EEE',
   },
   cameraHintButton: {
     width: 42,
     height: 42,
-    backgroundColor: 'rgba(108,99,255,0.15)',
+    backgroundColor: '#FFF8EE',
     borderRadius: 21,
+    borderWidth: 1,
+    borderColor: '#F5A62333',
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 6,
@@ -1205,14 +1146,14 @@ const styles = StyleSheet.create({
     flex: 1,
     maxHeight: 90,
     minHeight: 42,
-    backgroundColor: 'rgba(255,255,255,0.08)',
-    borderRadius: 20,
-    paddingHorizontal: 16,
+    backgroundColor: '#F5F5F5',
+    borderRadius: 22,
+    paddingHorizontal: 18,
     paddingVertical: 10,
-    color: '#FFF',
+    color: '#222',
     fontSize: 15,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.10)',
+    borderWidth: 1.5,
+    borderColor: '#EEE',
     marginRight: 6,
   },
   recordButton: {
@@ -1224,41 +1165,45 @@ const styles = StyleSheet.create({
     marginRight: 4,
   },
   recordButtonActive: {
-    backgroundColor: 'rgba(255,60,60,0.4)',
+    backgroundColor: '#FFF0EE',
     borderWidth: 2,
-    borderColor: '#FF4444',
+    borderColor: '#D94A4A',
   },
   recordButtonReady: {
-    backgroundColor: 'rgba(255,107,107,0.15)',
+    backgroundColor: '#E8F8EC',
+    borderColor: '#4CAF50',
   },
   recordButtonText: {
     fontSize: 18,
   },
   sendButton: {
-    width: 42,
+    width: 48,
     height: 42,
-    backgroundColor: '#6C63FF',
+    backgroundColor: '#F5A623',
     borderRadius: 21,
     justifyContent: 'center',
     alignItems: 'center',
   },
   sendButtonDisabled: {
-    opacity: 0.3,
+    opacity: 0.35,
   },
   sendButtonText: {
     color: '#FFF',
     fontSize: 22,
     fontWeight: 'bold',
   },
+  sendButtonTextDisabled: {
+    color: '#AAA',
+  },
 
   // Gesture guide bar
   guideBar: {
-    paddingVertical: 5,
-    backgroundColor: 'rgba(0,0,0,0.6)',
+    paddingVertical: 3,
+    backgroundColor: '#FAFAFA',
     alignItems: 'center',
   },
   guideText: {
-    color: '#444',
+    color: '#AAA',
     fontSize: 11,
   },
 
@@ -1310,7 +1255,7 @@ const styles = StyleSheet.create({
   },
   processingOverlay: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(0,0,0,0.7)',
+    backgroundColor: 'rgba(0,0,0,0.75)',
     justifyContent: 'center',
     alignItems: 'center',
   },
