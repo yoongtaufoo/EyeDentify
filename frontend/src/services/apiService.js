@@ -178,7 +178,7 @@ export async function getChatHistory(userId) {
     // 2. If the response is not "OK" (like a 500 error), don't try to parse it
     if (!response.ok || rawText.startsWith("I")) {
       console.warn("Backend sent an error:", rawText);
-      return []; // Return empty list instead of crashing
+      return null; // Return null to indicate error (distinct from empty history)
     }
 
     // 3. Only parse if it looks like JSON
@@ -186,8 +186,8 @@ export async function getChatHistory(userId) {
     return data.history || [];
   } catch (error) {
     console.error("Network Error:", error.message);
-    // Let the user know without a red screen
-    return []; 
+    // Return null to indicate error so caller can show fallback UI
+    return null; 
   }
 }
 
@@ -215,6 +215,30 @@ export async function getChatHistory(userId) {
 //   if (!response.ok) throw new Error(data.detail || 'Failed to load history');
 //   return data.history;
 // }
+
+// ============================================================
+// AUDIO TRANSCRIPTION
+// ============================================================
+
+/**
+ * Send base64 audio to backend for speech-to-text transcription.
+ * Returns: { text: string, success: bool }
+ */
+export async function transcribeAudio(audioBase64) {
+  const formData = new FormData();
+  formData.append('audio_base64', audioBase64);
+
+  console.log(`[API] Transcribing audio, base64 size: ~${Math.round(audioBase64.length * 0.75 / 1024)}KB`);
+
+  const response = await fetch(`${BACKEND_URL}/audio/transcribe`, {
+    method: 'POST',
+    body: formData,
+  });
+
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || 'Transcription failed');
+  return data;
+}
 
 // ============================================================
 // COMBINED AGENT ENDPOINT (convenience / legacy)

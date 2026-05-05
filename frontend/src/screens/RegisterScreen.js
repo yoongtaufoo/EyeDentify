@@ -31,14 +31,28 @@ export default function RegisterScreen({ navigation }) {
   const [loading, setLoading] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false); // shows "Processing..." after stop is clicked
+  const [isStopping, setIsStopping] = useState(false); // guard: true while async stop() is in flight
   const [recordingField, setRecordingField] = useState(''); // '' | 'name' | 'email' | 'password' — which field is actively recording
   const [showPassword, setShowPassword] = useState(false); // eye icon toggle for keyboard mode
+  const [isAudioEditing, setIsAudioEditing] = useState(false);
+  const [isReallyListening, setIsReallyListening] = useState(false); // true ONLY after recorder.record() succeeds (2nd haptic)
+  const [emailStep, setEmailStep] = useState(''); // '' | 'local' | 'domain' — two-step email recording
+  const [emailLocalPart, setEmailLocalPart] = useState(''); // stores first part of email before @
 
   const emailInputRef = useRef(null);
   const nameInputRef = useRef(null);
   const passwordInputRef = useRef(null);
   const audioControlRef = useRef(null); // holds { stop } from useAudioListener
-  const { startListening } = useAudioListener();
+  const { startListening, cleanupRecorder } = useAudioListener();
+
+  // Cleanup audio recorder on unmount to prevent IllegalStateException on re-entry
+  useEffect(() => {
+    return () => {
+      Speech.stop(); // stop any TTS when leaving screen
+      cleanupRecorder();
+      setIsReallyListening(false);
+    };
+  }, [cleanupRecorder]);
 
   // Welcome message on mount
   useEffect(() => {
@@ -52,12 +66,13 @@ export default function RegisterScreen({ navigation }) {
       setIsRecording(false);
       setIsProcessing(false);
       setRecordingField('');
+      setIsReallyListening(false);
     };
     cb.__processing = (processing) => {
       if (processing) {
-        // User clicked stop — immediately show feedback
         setIsRecording(false);
         setIsProcessing(true);
+        setIsReallyListening(false);
       } else {
         setIsProcessing(false);
       }
@@ -70,15 +85,13 @@ export default function RegisterScreen({ navigation }) {
   // Handle mode selection
   const selectMode = (mode) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    Speech.stop(); // Immediately stop any previous TTS so mic can start faster
     setInputMode(mode);
     setView(VIEW.NAME_INPUT);
 
     if (mode === 'audio') {
-      Speech.speak("Audio mode selected. Please speak your full name.");
-      setIsRecording(true);
-      setIsProcessing(false);
+      Speech.speak("Audio mode selected. Tap start to speak your full name.");
       setRecordingField('name');
-      startListening("temp_user", makeAudioCallback(setName, 'name')).then((ctrl) => { audioControlRef.current = ctrl; });
     } else if (mode === 'braille') {
       Speech.speak("Braille mode selected. Use the dot grid to enter your full name.");
     } else {
@@ -93,14 +106,14 @@ export default function RegisterScreen({ navigation }) {
       return;
     }
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    Speech.stop(); // Stop previous TTS so mic starts fast when user taps START
     setView(VIEW.EMAIL_INPUT);
 
     if (inputMode === 'audio') {
-      Speech.speak("Name received. Now please speak your email address.");
-      setIsRecording(true);
-      setIsProcessing(false);
+      Speech.speak("Name received. We will record your email in two parts. Tap start to speak your email name, the part before the at sign.");
       setRecordingField('email');
-      startListening("temp_user", makeAudioCallback(setEmail, 'email')).then((ctrl) => { audioControlRef.current = ctrl; });
+      setEmailStep('');
+      setEmailLocalPart('');
     } else if (inputMode === 'braille') {
       Speech.speak("Name received. Now use the dot grid to enter your email address.");
     } else {
@@ -116,14 +129,12 @@ export default function RegisterScreen({ navigation }) {
       return;
     }
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    Speech.stop(); // Stop previous TTS so mic starts fast when user taps START
     setView(VIEW.PASSWORD_INPUT);
 
     if (inputMode === 'audio') {
-      Speech.speak("Email received. Now please speak your desired password.");
-      setIsRecording(true);
-      setIsProcessing(false);
+      Speech.speak("Email received. Tap start to speak your desired password.");
       setRecordingField('password');
-      startListening("temp_user", makeAudioCallback(setPassword, 'password')).then((ctrl) => { audioControlRef.current = ctrl; });
     } else if (inputMode === 'braille') {
       Speech.speak("Email received. Now use the dot grid to enter your password.");
     } else {
@@ -135,6 +146,7 @@ export default function RegisterScreen({ navigation }) {
   // Return to mode selection
   const returnToModePicker = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    Speech.stop();
     setView(VIEW.MODE_PICKER);
     Speech.speak("Returning to mode selection.");
   };
@@ -166,13 +178,101 @@ export default function RegisterScreen({ navigation }) {
   };
 
   // ============================================================
+  // TWO-STEP EMAIL AUDIO RECORDING
+  // ============================================================
+
+  // Start recording email LOCAL part (before @). After it completes, auto-chains to domain.
+  const startEmailLocalRecording = async () => {
+    setEmailStep('local');
+    setEmailLocalPart('');
+    setIsRecording(true);
+    setIsReallyListening(false);
+    setRecordingField('email');
+
+    const onLocalReceived = (transcribedText) => {
+      setEmailLocalPart(transcribedText);
+      setIsRecording(false);
+      setIsProcessing(false);
+      setIsReallyListening(false);
+      // Auto-chain to domain part after a brief pause
+      Speech.stop();
+      setTimeout(() => {
+        Speech.speak(`I heard: ${transcribedText}. Now tap start to speak your email domain, like gmail dot com.`);
+        setEmailStep('domain'); // ready for next step — user taps START again
+      }, 500);
+    };
+    onLocalReceived.__processing = (processing) => {
+      if (processing) { setIsRecording(false); setIsProcessing(true); setIsReallyListening(false); }
+      else { setIsProcessing(false); }
+    };
+    onLocalReceived.__fieldType = 'email_local';
+
+    try {
+      const ctrl = await startListening("temp_user", onLocalReceived, () => setIsReallyListening(true));
+      audioControlRef.current = ctrl;
+    } catch (e) {
+      console.warn('[Audio] Email local start error:', e?.message);
+      setIsRecording(false);
+      setEmailStep('');
+    }
+  };
+
+  // Start recording email DOMAIN part (after @). Combines with local part to form full email.
+  const startEmailDomainRecording = async () => {
+    setEmailStep('domain');
+    setIsRecording(true);
+    setIsReallyListening(false);
+    setRecordingField('email');
+
+    const onDomainReceived = (transcribedText) => {
+      const fullEmail = `${emailLocalPart}@${transcribedText}`;
+      setEmail(fullEmail);
+      setIsRecording(false);
+      setIsProcessing(false);
+      setRecordingField('');
+      setIsReallyListening(false);
+      setEmailStep('');
+      setEmailLocalPart('');
+    };
+    onDomainReceived.__processing = (processing) => {
+      if (processing) { setIsRecording(false); setIsProcessing(true); setIsReallyListening(false); }
+      else { setIsProcessing(false); }
+    };
+    onDomainReceived.__fieldType = 'email_domain';
+
+    try {
+      const ctrl = await startListening("temp_user", onDomainReceived, () => setIsReallyListening(true));
+      audioControlRef.current = ctrl;
+    } catch (e) {
+      console.warn('[Audio] Email domain start error:', e?.message);
+      setIsRecording(false);
+    }
+  };
+
+  // Get the appropriate label/text for email based on current step
+  const getEmailStepLabel = () => {
+    if (emailStep === 'local') return 'email name (before @)';
+    if (emailStep === 'domain') return 'email domain (after @)';
+    return 'email address';
+  };
+
+  // ============================================================
   // GESTURE DEFINITIONS
   // ============================================================
 
   // Swipe down to go to Login screen (always available)
   const swipeDown = Gesture.Fling()
     .direction(Directions.DOWN)
-    .onEnd(() => {
+    .onEnd(async () => {
+      // Stop any ongoing speech/recording before leaving this screen
+      Speech.stop();
+      if (audioControlRef.current && isRecording && isReallyListening) {
+        try { await audioControlRef.current.stop(); } catch (_) {}
+      }
+      setIsRecording(false);
+      setIsReallyListening(false);
+      setIsProcessing(false);
+      setRecordingField('');
       navigation.navigate('Login');
       Speech.speak("Switching to Login.");
     })
@@ -333,14 +433,76 @@ export default function RegisterScreen({ navigation }) {
     const values = { email, name, password };
     const hasValue = !!values[fieldType];
 
+    // When not recording/processing and already has a value, show editable input + re-record button
+    if (!isRecording && !isProcessing && hasValue) {
+      const labels = {
+        email: 'Email input',
+        name: 'Name input',
+        password: 'Password input',
+      };
+      const placeholders = {
+        email: 'your@email.com',
+        name: 'Your full name',
+        password: 'Your password',
+      };
+      const keyboardTypes = {
+        email: 'email-address',
+        name: 'default',
+        password: 'default',
+      };
+      return (
+        <View style={styles.audioEditContainer}>
+          <TextInput
+            ref={inputRef}
+            style={styles.audioEditableInput}
+            value={fieldValue}
+            onChangeText={fieldType === 'email' ? setEmail : fieldType === 'name' ? setName : setPassword}
+            placeholder={placeholders[fieldType]}
+            placeholderTextColor="#666"
+            keyboardType={keyboardTypes[fieldType]}
+            autoCapitalize={fieldType === 'email' ? 'none' : 'words'}
+            secureTextEntry={false}
+            autoFocus={isAudioEditing}
+            accessible={true}
+            accessibilityLabel={labels[fieldType]}
+            accessibilityHint={`Heard: ${fieldValue}. Tap to edit.`}
+            onFocus={() => { setIsAudioEditing(true); speakOnFocus(`${labels[fieldType]}. Current value: ${fieldValue}. Edit as needed.`); }}
+          />
+          <TouchableOpacity
+            style={[styles.audioStopButton, styles.audioReRecordButton]}
+            onPress={async () => {
+              if (isStopping || isProcessing) return;
+              if (fieldType === 'email') {
+                // Two-step email re-record: clear current and start fresh
+                setEmail('');
+                setEmailStep('');
+                setEmailLocalPart('');
+                await startEmailLocalRecording();
+              } else {
+                setIsRecording(true);
+                setIsReallyListening(false); // reset until 2nd haptic fires
+                setRecordingField(fieldType);
+                const setter = fieldType === 'name' ? setName : setPassword;
+                const ctrl = await startListening("temp_user", makeAudioCallback(setter, fieldType), () => setIsReallyListening(true));
+                audioControlRef.current = ctrl;
+              }
+            }}
+            disabled={loading}
+          >
+            <Text style={styles.audioStopButtonText}>🔄 RE-RECORD</Text>
+          </TouchableOpacity>
+        </View>
+      );
+    }
+
     return (
       <View style={styles.audioStatus}>
         <View style={styles.audioStatusInner}>
           <Text style={[styles.audioStatusText, !isRecording && !isProcessing && hasValue && styles.audioStatusDone]}>
             {isProcessing ? '⏳ Processing your audio...' :
-              (hasValue ? `Heard: ${values[fieldType]}` : (isRecording ? `Listening for your ${fieldType}...` : `Tap below to speak your ${fieldType}`))}
+              (hasValue ? `Heard: ${values[fieldType]}` : (!isReallyListening && isRecording ? `Loading microphone...` : (isRecording ? `🎙 Listening for your ${fieldType === 'email' ? getEmailStepLabel() : fieldType}...` : `Tap below to speak your ${fieldType === 'email' ? getEmailStepLabel() : fieldType}`)))}
           </Text>
-          {(isRecording || isProcessing) && <ActivityIndicator size="small" color={isProcessing ? "#FF9800" : "#FF4444"} style={styles.audioSpinner} />}
+          {(isRecording || isProcessing) && <ActivityIndicator size="small" color={isProcessing ? "#FF9800" : (isReallyListening ? "#FF4444" : "#888")} style={styles.audioSpinner} />}
         </View>
         <TouchableOpacity
           style={[
@@ -348,26 +510,48 @@ export default function RegisterScreen({ navigation }) {
             isRecording && recordingField === fieldType ? styles.audioStopButtonActive :
               (isProcessing ? styles.audioProcessingButton : styles.audioReRecordButton),
           ]}
-          onPress={() => {
-            if ((isRecording && recordingField === fieldType || isProcessing) && audioControlRef.current) {
-              // During recording for THIS field: stop; during processing: already stopping, ignore
-              if (!isProcessing) {
-                audioControlRef.current.stop();
+          onPress={async () => {
+            if (isStopping || isProcessing) return;
+
+            if (isRecording && recordingField === fieldType && audioControlRef.current && isReallyListening) {
+              // --- STOP recording (only works after 2nd haptic / real recording started) ---
+              setIsStopping(true);
+              setIsReallyListening(false);
+              try {
+                await audioControlRef.current.stop();
+              } catch (err) {
+                console.warn('[Audio] Stop error:', err?.message);
               }
+              setIsStopping(false);
+            } else if (!isReallyListening && isRecording) {
+              // Still initializing — ignore tap or speak hint
+              Speech.speak('Still starting. Please wait.');
+              return;
             } else {
-              // Re-record: trigger listening flow again based on field type
-              setIsRecording(true);
-              setIsProcessing(false);
-              setRecordingField(fieldType);
-              const setter = fieldType === 'name' ? setName : fieldType === 'email' ? setEmail : setPassword;
-              startListening("temp_user", makeAudioCallback(setter, fieldType)).then((ctrl) => { audioControlRef.current = ctrl; });
+              // --- START / RE-RECORD: begin listening ---
+              if (fieldType === 'email') {
+                // Two-step email recording: local part first, then domain
+                if (emailStep === 'domain' && emailLocalPart) {
+                  await startEmailDomainRecording();
+                } else {
+                  await startEmailLocalRecording();
+                }
+              } else {
+                setIsRecording(true);
+                setIsReallyListening(false); // reset until 2nd haptic fires
+                setRecordingField(fieldType);
+                const setter = fieldType === 'name' ? setName : setPassword;
+                const ctrl = await startListening("temp_user", makeAudioCallback(setter, fieldType), () => setIsReallyListening(true));
+                audioControlRef.current = ctrl;
+              }
             }
           }}
-          disabled={loading || isProcessing}
+          disabled={loading || isProcessing || isStopping}
         >
           <Text style={styles.audioStopButtonText}>
             {isProcessing ? '⏳ PROCESSING...' :
-              (isRecording && recordingField === fieldType ? '⏹ STOP' : (hasValue ? '🔄 RE-RECORD' : '🎤 START'))}
+              (!isReallyListening && isRecording ? '⏳ LOADING...' :
+                (isRecording && recordingField === fieldType ? '⏹ STOP' : (hasValue ? '🔄 RE-RECORD' : '🎤 START')))}
           </Text>
         </TouchableOpacity>
       </View>
@@ -832,5 +1016,21 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 16,
     marginTop: 15,
+  },
+  // Audio mode - editable input after transcription
+  audioEditContainer: {
+    width: '100%',
+  },
+  audioEditableInput: {
+    width: '100%',
+    height: 55,
+    backgroundColor: '#1A2A1A',
+    borderRadius: 12,
+    paddingHorizontal: 18,
+    color: '#4ADE80',
+    fontSize: 17,
+    borderWidth: 1.5,
+    borderColor: '#4CAF50',
+    marginBottom: 10,
   },
 });

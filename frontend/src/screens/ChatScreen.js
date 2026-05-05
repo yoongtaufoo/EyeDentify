@@ -152,14 +152,16 @@ export default function ChatScreen() {
         memoryId: msg.memory_id || null,
       }));
       setMessages(formatted);
-    } else {
-      // If backend is down, we don't crash, we just show a welcome message
+    } else if (history === null) {
+      // null means the backend was unreachable (network error / server crash)
+      // Show a fallback message so the app is still usable locally
       setMessages([{ 
         id: 'welcome', 
         role: 'assistant', 
         content: "I couldn't reach my brain, but I'm still here to help locally." 
       }]);
     }
+    // else: history is [] (empty array) — new user with no messages yet, show blank chat
     setLoading(false);
   };
 
@@ -239,8 +241,9 @@ export default function ChatScreen() {
           ])
       );
 
-      // Speak the description
+      // Speak the description — stop any previous speech first
       const desc = result.description || 'Image processed successfully.';
+      Speech.stop();
       Speech.speak(desc, { rate: 0.85 });
 
     } catch (error) {
@@ -283,12 +286,25 @@ export default function ChatScreen() {
       }
 
       await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
 
+      // Speak "Recording..." first — WAIT for it to finish before capturing mic
+      Speech.speak('Recording...');
+      // Haptic feedback
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+      setTimeout(() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium), 200);
+
+      // Wait for TTS to finish so we don't record our own "Recording..." announcement
+      await new Promise((r) => setTimeout(r, 200));
+      let attempts = 0;
+      while (await Speech.isSpeakingAsync()) {
+        await new Promise((r) => setTimeout(r, 150));
+        if (attempts++ > 80) break; // safety timeout ~12s
+      }
+
+      // NOW start recording — after TTS is done
       await recorder.prepareToRecordAsync();
       recorder.record();
       setIsRecording(true);
-      Speech.speak('Recording. Tap stop when done.');
     } catch (error) {
       console.error('Recording start error:', error);
       Speech.speak('Could not start recording.');
@@ -324,11 +340,11 @@ export default function ChatScreen() {
         // Send to backend for transcription + AI response
         const result = await sendAudioMessage(user.id, base64);
 
-        // Update bubble with transcribed text
+        // Update bubble with transcribed text + show detected text above Play Voice
         if (result?.audio_text) {
           setMessages((prev) =>
             prev.map((msg) =>
-              msg.id === voiceMsg.id ? { ...msg, content: result.audio_text } : msg
+              msg.id === voiceMsg.id ? { ...msg, content: result.audio_text, transcribedText: result.audio_text } : msg
             )
           );
         }
@@ -340,6 +356,7 @@ export default function ChatScreen() {
           timestamp: new Date().toISOString(),
         };
         setMessages((prev) => [...prev, assistantMsg]);
+        Speech.stop();
         Speech.speak(assistantMsg.content, { rate: 0.88 });
       }
     } catch (error) {
@@ -379,6 +396,7 @@ export default function ChatScreen() {
         timestamp: new Date().toISOString(),
       };
       setMessages((prev) => [...prev, assistantMsg]);
+      Speech.stop();
       Speech.speak(assistantMsg.content, { rate: 0.88 });
 
     } catch (error) {
@@ -650,6 +668,14 @@ export default function ChatScreen() {
         >
           {item.content}
         </Text>
+
+        {/* Show detected transcription text above Play Voice button */}
+        {item.transcribedText && (
+          <View style={styles.transcribedTextContainer}>
+            <Text style={styles.transcribedTextLabel}>Detected:</Text>
+            <Text style={styles.transcribedTextValue}>{item.transcribedText}</Text>
+          </View>
+        )}
 
         {/* Voice playback button */}
         {item.audioUri && (
@@ -1113,6 +1139,29 @@ const styles = StyleSheet.create({
     color: '#FFF',
     fontSize: 14,
     fontWeight: '600',
+  },
+  transcribedTextContainer: {
+    marginTop: 8,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    backgroundColor: 'rgba(108,99,255,0.15)',
+    borderRadius: 10,
+    alignSelf: 'flex-start',
+    borderWidth: 1,
+    borderColor: 'rgba(108,99,255,0.3)',
+  },
+  transcribedTextLabel: {
+    color: '#6C63FF',
+    fontSize: 11,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    letterSpacing: 1,
+    marginBottom: 2,
+  },
+  transcribedTextValue: {
+    color: '#E0E0E0',
+    fontSize: 14,
+    lineHeight: 20,
   },
 
   // Typing indicator

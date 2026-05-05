@@ -306,9 +306,14 @@ async def audio_transcribe(audio_base64: str = Form(...)):
     Does NOT require a valid user_id or touch the database.
     Used by the frontend voice input before sending the actual chat message.
     """
+    print(f"\n[API] === /audio/transcribe called ===")
+    print(f"[API] Received base64 length: {len(audio_base64)} chars")
+    print(f"[API] First 80 chars of base64: {audio_base64[:80]}...")
+    
     from audio import transcribe_audio_base64
     try:
         text = await transcribe_audio_base64(audio_base64)
+        print(f"[API] Transcription result: '{text}'")
         return {"text": text or "", "success": True}
     except Exception as e:
         print(f"[Audio] Transcription error: {e}")

@@ -33,7 +33,22 @@ async def transcribe_audio_base64(audio_b64: str) -> str:
     try:
         # Decode base64 to bytes
         audio_bytes = base64.b64decode(audio_b64)
-        print(f"[Audio] Sending {len(audio_bytes)} bytes to Groq Whisper API...")
+        
+        # Detailed logging for debugging
+        print(f"\n{'='*60}")
+        print(f"[Audio] === NEW TRANSCRIPTION REQUEST ===")
+        print(f"[Audio] Raw base64 string length: {len(audio_b64)} chars")
+        print(f"[Audio] Decoded audio bytes: {len(audio_bytes)} bytes")
+        print(f"[Audio] Audio format detection: {_detect_audio_format(audio_bytes)}")
+        print(f"[Audio] First 16 bytes (hex): {audio_bytes[:16].hex()}")
+        if len(audio_bytes) > 44:
+            # WAV header: bytes 22-23 = num channels, 24-27 = sample rate, 34-35 = bits per sample
+            import struct
+            channels = struct.unpack('<H', audio_bytes[22:24])[0] if len(audio_bytes) >= 24 else '?'
+            sample_rate = struct.unpack('<I', audio_bytes[28:32])[0] if len(audio_bytes) >= 32 else '?'
+            bits = struct.unpack('<H', audio_bytes[34:36])[0] if len(audio_bytes) >= 36 else '?'
+            print(f"[Audio] WAV info: channels={channels}, sample_rate={sample_rate}, bit_depth={bits}")
+        print(f"{'='*60}\n")
 
         # Write to temp file (API expects multipart file upload)
         with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
