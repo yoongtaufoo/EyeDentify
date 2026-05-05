@@ -765,7 +765,7 @@ export default function ChatScreen({ navigation }) {
                   : 'Voice record button. Tap to start recording a voice message.')}
               >
                 <Text style={styles.recordButtonText}>
-                  {isRecording ? '■ STOP' : '🎤'}
+                  {isRecording ? '■' : '🎤'}
                 </Text>
               </TouchableOpacity>
 
@@ -790,7 +790,7 @@ export default function ChatScreen({ navigation }) {
             {/* Gesture guide bar at very bottom */}
             <View style={styles.guideBar}>
               <Text style={styles.guideText}>
-                ← Tap left: Camera &nbsp;|&nbsp; 🎤 Tap: Talk &nbsp;|&nbsp; 👆👆 2-finger: Logout &nbsp;|&nbsp; ↔️ Swipe: Tabs
+                Tap left: Camera &nbsp;|&nbsp; Tap 🎤: Talk &nbsp;|&nbsp; 2-finger: Logout &nbsp;|&nbsp; Swipe: Tabs
               </Text>
             </View>
           </View>
@@ -916,6 +916,7 @@ const styles = StyleSheet.create({
   chatContainer: {
     flex: 1,
     backgroundColor: '#F7F7F7',
+    paddingBottom: 60
   },
   header: {
     flexDirection: 'row',
