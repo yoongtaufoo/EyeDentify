@@ -19,18 +19,53 @@ const ChatScreen = ({ user, onLogout }) => {
     return id;
   };
 
+  // const playBackendTTS = useCallback((audioBase64) => {
+  //   if (!audioBase64) return false;
+  //   try {
+  //     const binaryStr = atob(audioBase64);
+  //     const bytes = new Uint8Array(binaryStr.length);
+  //     for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i);
+  //     const blob = new Blob([bytes], { type: 'audio/mp3' });
+  //     const url = URL.createObjectURL(blob);
+  //     const audio = new Audio(url);
+  //     audio.volume = 1.0;
+  //     audio.play().catch(e => console.warn('[TTS] Autoplay blocked:', e.message));
+  //     audio.onended = () => URL.revokeObjectURL(url);
+  //     return true;
+  //   } catch (err) {
+  //     console.warn('[TTS] Playback failed:', err.message);
+  //     return false;
+  //   }
+  // }, []);
+
   const playBackendTTS = useCallback((audioBase64) => {
     if (!audioBase64) return false;
     try {
+      // Kill any backend audio currently speaking
+      if (activeBackendAudioRef.current) {
+        activeBackendAudioRef.current.pause();
+        activeBackendAudioRef.current = null;
+      }
+
       const binaryStr = atob(audioBase64);
       const bytes = new Uint8Array(binaryStr.length);
       for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i);
       const blob = new Blob([bytes], { type: 'audio/mp3' });
       const url = URL.createObjectURL(blob);
+      
       const audio = new Audio(url);
       audio.volume = 1.0;
+      
+      // Track this instance globally
+      activeBackendAudioRef.current = audio; 
+
       audio.play().catch(e => console.warn('[TTS] Autoplay blocked:', e.message));
-      audio.onended = () => URL.revokeObjectURL(url);
+      audio.onended = () => {
+        URL.revokeObjectURL(url);
+        if (activeBackendAudioRef.current === audio) {
+          activeBackendAudioRef.current = null;
+        }
+      };
       return true;
     } catch (err) {
       console.warn('[TTS] Playback failed:', err.message);
@@ -58,6 +93,7 @@ const ChatScreen = ({ user, onLogout }) => {
   const canvasRef = useRef(null);
   const streamRef = useRef(null);
   const chatEndRef = useRef(null);
+  const activeBackendAudioRef = useRef(null);
 
   // Auto-scroll to bottom
   useEffect(() => {
@@ -68,6 +104,20 @@ const ChatScreen = ({ user, onLogout }) => {
   useEffect(() => {
     speak('Chat screen loaded.');
   }, []);
+
+  // Automatically re-attach the camera stream when switching back to live video view
+  useEffect(() => {
+    if (showCameraModal && !capturedImage && streamRef.current) {
+      // A micro-timeout ensures React has fully mounted the <video> element back into the DOM
+      const timer = setTimeout(() => {
+        if (videoRef.current) {
+          videoRef.current.srcObject = streamRef.current;
+          videoRef.current.play().catch(err => console.warn('[Camera] Playback failed:', err));
+        }
+      }, 50);
+      return () => clearTimeout(timer);
+    }
+  }, [capturedImage, showCameraModal]);
 
   // Load chat history
   useEffect(() => {
@@ -129,6 +179,25 @@ const ChatScreen = ({ user, onLogout }) => {
     if (showCameraModal) stopCamera().then(() => setTimeout(startCamera, 200));
   };
 
+  // const handleRetakePhoto = () => {
+  //   // Reset captured image to show video again
+  //   setCapturedImage(null);
+  //   // Ensure stream is connected and video plays
+  //   if (videoRef.current && streamRef.current) {
+  //     videoRef.current.srcObject = streamRef.current;
+  //     // Explicitly play the video after a small delay
+  //     setTimeout(() => {
+  //       videoRef.current?.play?.().catch(err => console.warn('Play error:', err));
+  //     }, 100);
+  //   }
+  // };
+
+  const handleRetakePhoto = () => {
+    // Simply clear the captured image state.
+    // The new useEffect hook below will handle re-attaching the live video stream dynamically.
+    setCapturedImage(null);
+  };
+
   const captureImage = () => {
     if (!videoRef.current || !canvasRef.current) return;
     const canvas = canvasRef.current;
@@ -139,7 +208,7 @@ const ChatScreen = ({ user, onLogout }) => {
     ctx.drawImage(video, 0, 0);
     const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
     setCapturedImage(dataUrl);
-    stopCamera();
+    // DO NOT close camera modal here - keep it open to show captured preview
   };
 
   // Send message
@@ -232,14 +301,91 @@ const ChatScreen = ({ user, onLogout }) => {
       setIsLoading(false);
       setProcessingAction(null);
       setCapturedImage(null);
+      setShowCameraModal(false);  // Close modal after processing completes
     }
   };
 
+  // // Voice recording
+  // const toggleVoiceMessage = async () => {
+  //   if (isVoiceRecording) {
+  //     try {
+  //       setIsVoiceRecording(false);
+  //       const text = await stopRecording(requireUid());
+  //       if (text && text.trim()) {
+  //         setInputText(text.trim());
+  //         sendMessage(text.trim());
+  //       }
+  //     } catch (err) {
+  //       console.error('[Chat] Voice error:', err);
+  //       speak('Sorry, I could not understand your voice.');
+  //       setIsVoiceRecording(false);
+  //     }
+  //   } else {
+  //     try {
+  //       if (!isSpeechSupported()) return;
+  //       setIsVoiceRecording(true);
+  //       await startRecording();
+  //     } catch {
+  //       setIsVoiceRecording(false);
+  //     }
+  //   }
+  // };
+
+  // Voice recording
+  // const toggleVoiceMessage = async () => {
+  //   // 1. Stop local speech synthesis engine
+  //   if ('speechSynthesis' in window) {
+  //     window.speechSynthesis.cancel();
+  //   }
+
+  //   // 2. Stop backend high-quality TTS audio stream
+  //   if (activeBackendAudioRef.current) {
+  //     activeBackendAudioRef.current.pause();
+  //     activeBackendAudioRef.current = null;
+  //   }
+
+  //   if (isVoiceRecording) {
+  //     try {
+  //       setIsVoiceRecording(false);
+  //       const text = await stopRecording(requireUid());
+  //       if (text && text.trim()) {
+  //         setInputText(text.trim());
+  //         sendMessage(text.trim());
+  //       }
+  //     } catch (err) {
+  //       console.error('[Chat] Voice error:', err);
+  //       speak('Sorry, I could not understand your voice.');
+  //       setIsVoiceRecording(false);
+  //     }
+  //   } else {
+  //     try {
+  //       if (!isSpeechSupported()) return;
+  //       setIsVoiceRecording(true);
+  //       await startRecording();
+  //     } catch {
+  //       setIsVoiceRecording(false);
+  //     }
+  //   }
+  // };
+
   // Voice recording
   const toggleVoiceMessage = async () => {
+    // 1. Instantly stop local speech synthesis engine
+    if ('speechSynthesis' in window) {
+      window.speechSynthesis.cancel();
+    }
+
+    // 2. Instantly stop backend high-quality TTS audio stream
+    if (activeBackendAudioRef.current) {
+      activeBackendAudioRef.current.pause();
+      activeBackendAudioRef.current = null;
+    }
+
     if (isVoiceRecording) {
       try {
         setIsVoiceRecording(false);
+        window.isRecordingVoice = false; // Lift the silence guard
+        
         const text = await stopRecording(requireUid());
         if (text && text.trim()) {
           setInputText(text.trim());
@@ -249,17 +395,57 @@ const ChatScreen = ({ user, onLogout }) => {
         console.error('[Chat] Voice error:', err);
         speak('Sorry, I could not understand your voice.');
         setIsVoiceRecording(false);
+        window.isRecordingVoice = false;
       }
     } else {
       try {
         if (!isSpeechSupported()) return;
+        
+        window.isRecordingVoice = true; // Activate the silence guard before recording starts
         setIsVoiceRecording(true);
+        
+        // Extra security: clear anything that tried to slip through during the state change
+        if ('speechSynthesis' in window) {
+          window.speechSynthesis.cancel();
+        }
+        
         await startRecording();
       } catch {
         setIsVoiceRecording(false);
+        window.isRecordingVoice = false; // Fallback reset
       }
     }
   };
+
+  // const toggleVoiceMessage = async () => {
+  //   // Immediately cut off any ongoing screen reading/TTS
+  //   if ('speechSynthesis' in window) {
+  //     window.speechSynthesis.cancel();
+  //   }
+
+  //   if (isVoiceRecording) {
+  //     try {
+  //       setIsVoiceRecording(false);
+  //       const text = await stopRecording(requireUid());
+  //       if (text && text.trim()) {
+  //         setInputText(text.trim());
+  //         sendMessage(text.trim());
+  //       }
+  //     } catch (err) {
+  //       console.error('[Chat] Voice error:', err);
+  //       speak('Sorry, I could not understand your voice.');
+  //       setIsVoiceRecording(false);
+  //     }
+  //   } else {
+  //     try {
+  //       if (!isSpeechSupported()) return;
+  //       setIsVoiceRecording(true);
+  //       await startRecording();
+  //     } catch {
+  //       setIsVoiceRecording(false);
+  //     }
+  //   }
+  // };
 
   const handleKeyDown = (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } };
 
@@ -422,20 +608,87 @@ const ChatScreen = ({ user, onLogout }) => {
     },
     modalVideo: { width: '100%', maxHeight: '50vh', objectFit: 'cover', display: 'block' },
     modalCaptured: { width: '100%', maxHeight: '50vh', objectFit: 'cover', display: 'block', borderRadius: 20 },
+    // modalControls: {
+    //   position: 'absolute', bottom: 0, left: 0, right: 0,
+    //   padding: '20px', background: 'linear-gradient(transparent, rgba(0,0,0,0.8))',
+    //   display: 'flex', justifyContent: 'center', gap: 14,
+    // },
+    // captureBtn: {
+    //   width: 62, height: 62, borderRadius: 50, border: '3px solid #FFF',
+    //   background: 'rgba(255,255,255,0.2)', cursor: 'pointer',
+    //   fontSize: 26, color: '#FFF', display: 'flex', alignItems: 'center', justifyContent: 'center',
+    // },
+    // modalActionBtn: {
+    //   width: 48, height: 48, borderRadius: 50, border: '1.5px solid rgba(255,255,255,0.4)',
+    //   background: 'rgba(255,255,255,0.1)', cursor: 'pointer', fontSize: 20, color: '#FFF',
+    //   display: 'flex', alignItems: 'center', justifyContent: 'center',
+    // },
+    // Camera Controls Wrapper
     modalControls: {
-      position: 'absolute', bottom: 0, left: 0, right: 0,
-      padding: '20px', background: 'linear-gradient(transparent, rgba(0,0,0,0.8))',
-      display: 'flex', justifyContent: 'center', gap: 14,
+      position: 'absolute',
+      bottom: 0,
+      left: 0,
+      right: 0,
+      padding: '24px',
+      background: 'linear-gradient(to top, rgba(0,0,0,0.9) 0%, rgba(0,0,0,0.4) 70%, transparent 100%)',
+      display: 'flex',
+      justifyContent: 'center', 
+      alignItems: 'center',
+      gap: '32px', // Equal spacing perfectly centers the capture button
+      boxSizing: 'border-box',
     },
+    
+    // Center Shutter Button
     captureBtn: {
-      width: 62, height: 62, borderRadius: 50, border: '3px solid #FFF',
-      background: 'rgba(255,255,255,0.2)', cursor: 'pointer',
-      fontSize: 26, color: '#FFF', display: 'flex', alignItems: 'center', justifyContent: 'center',
+      width: 68,
+      height: 68,
+      borderRadius: '50%',
+      border: '4px solid #FFFFFF',
+      background: 'rgba(255, 255, 255, 0.3)',
+      cursor: 'pointer',
+      fontSize: 28,
+      color: '#FFF',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      transition: 'transform 0.1s east, background 0.2s',
+      boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
     },
+
+    // Balanced Side Action Buttons (Flip & Close)
     modalActionBtn: {
-      width: 48, height: 48, borderRadius: 50, border: '1.5px solid rgba(255,255,255,0.4)',
-      background: 'rgba(255,255,255,0.1)', cursor: 'pointer', fontSize: 20, color: '#FFF',
-      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      width: 46,
+      height: 46,
+      borderRadius: '50%',
+      border: '1.5px solid rgba(255,255,255,0.4)',
+      background: 'rgba(255,255,255,0.15)',
+      backdropFilter: 'blur(4px)',
+      cursor: 'pointer',
+      fontSize: 18,
+      color: '#FFF',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      transition: 'background 0.2s',
+    },
+
+    // Absolute Viewport Close Button (Top Right)
+    closeModalBtn: {
+      position: 'absolute',
+      top: 20,
+      right: 20,
+      width: 40,
+      height: 40,
+      borderRadius: '50%',
+      background: 'rgba(0, 0, 0, 0.6)',
+      border: '1.5px solid rgba(255, 255, 255, 0.2)',
+      color: '#FFF',
+      cursor: 'pointer',
+      fontSize: 16,
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      zIndex: 210,
     },
     capturedActions: {
       display: 'flex', gap: 12, marginTop: 8, width: '100%', maxWidth: 400,
@@ -478,12 +731,12 @@ const ChatScreen = ({ user, onLogout }) => {
       padding: '10px 14px', borderRadius: 12, fontSize: 13, margin: '8px 16px', textAlign: 'center',
     },
 
-    closeModalBtn: {
-      position: 'absolute', top: 14, right: 14, width: 36, height: 36, borderRadius: 50,
-      background: 'rgba(0,0,0,0.5)', border: 'none', color: '#FFF', cursor: 'pointer',
-      fontSize: 18, display: 'flex', alignItems: 'center', justifyContent: 'center',
-      zIndex: 15,
-    },
+    // closeModalBtn: {
+    //   position: 'absolute', top: 14, right: 14, width: 36, height: 36, borderRadius: 50,
+    //   background: 'rgba(0,0,0,0.5)', border: 'none', color: '#FFF', cursor: 'pointer',
+    //   fontSize: 18, display: 'flex', alignItems: 'center', justifyContent: 'center',
+    //   zIndex: 15,
+    // },
   };
 
   // Braille Component
@@ -573,10 +826,18 @@ const ChatScreen = ({ user, onLogout }) => {
               }}
             >
               <div>
-                <div style={{
-                  ...S.bubble,
-                  ...(msg.role==='user' ? S.bubbleUser : (msg.isError ? S.bubbleError : S.bubbleBot))
-                }}>
+                {/* Added onClick handler and cursor pointer here */}
+                <div 
+                  onClick={() => {
+                    const sender = msg.role === 'user' ? 'You said' : 'EyeDentify AI';
+                    speak(`${sender}: ${msg.text}`);
+                  }}
+                  style={{
+                    ...S.bubble,
+                    ...(msg.role==='user' ? S.bubbleUser : (msg.isError ? S.bubbleError : S.bubbleBot)),
+                    cursor: 'pointer' 
+                  }}
+                >
                   <span>{msg.text}</span>
                   {msg.image && <img src={msg.image} alt="Captured" style={S.msgImg} />}
                   {msg.imageUri && !msg.image && <img src={msg.imageUri} alt="Memory" style={S.msgImg} />}
@@ -650,6 +911,15 @@ const ChatScreen = ({ user, onLogout }) => {
               onFocus={() => speak(isVoiceRecording ? 'Stop recording button. Tap to stop.' : 'Voice record button. Tap to start recording.')}
             >{isVoiceRecording ? '\u{1F534}' : '\uD83C\uDFA4'}</button>
 
+            {/* <button
+              onClick={() => setShowBrailleInput(!showBrailleInput)}
+              title="Braille Input"
+              style={{ ...S.iconBtn, ...(showBrailleInput ? {background:'#FFF8EE',color:'#F5A623',borderColor:'#F5A623'}:{}) }}
+              aria-label="Toggle braille input"
+              tabIndex={0}
+              onFocus={() => speak('Braille input button. Tap to toggle braille keyboard.')}
+            >{'\u28FF'}</button> */}
+
             <button
               onClick={() => setShowBrailleInput(!showBrailleInput)}
               title="Braille Input"
@@ -657,7 +927,27 @@ const ChatScreen = ({ user, onLogout }) => {
               aria-label="Toggle braille input"
               tabIndex={0}
               onFocus={() => speak('Braille input button. Tap to toggle braille keyboard.')}
-            >{'\u28A0'}</button>
+            >
+              {/* Copy from here */}
+              <svg 
+                width="16" 
+                height="22" 
+                viewBox="0 0 16 22" 
+                fill="currentColor" 
+                style={{ display: 'block' }}
+              >
+                {/* Left Column Dots */}
+                <circle cx="3" cy="3" r="2" />
+                <circle cx="3" cy="11" r="2" />
+                <circle cx="3" cy="19" r="2" />
+                
+                {/* Right Column Dots */}
+                <circle cx="13" cy="3" r="2" />
+                <circle cx="13" cy="11" r="2" />
+                <circle cx="13" cy="19" r="2" />
+              </svg>
+              {/* To here */}
+            </button>
 
             <button
               onClick={sendMessage}
@@ -693,17 +983,41 @@ const ChatScreen = ({ user, onLogout }) => {
                   </div>
                 )}
                 
+                {/* Clean, Three-Column Control Bar */}
                 <div style={S.modalControls}>
-                  <button onClick={switchCamera} style={S.modalActionBtn} aria-label="Switch camera" tabIndex={0}
-                    onFocus={() => speak('Switch camera button.')}>{'\u{1F504}'}</button>
-                  <button onClick={captureImage} style={S.captureBtn} aria-label="Capture photo" tabIndex={0}
-                    onFocus={() => speak('Capture button. Tap to take a photo.')}>{'\u{1F4F8}'}</button>
-                  <button onClick={stopCamera} style={S.modalActionBtn} aria-label="Close camera" tabIndex={0}
-                    onFocus={() => speak('Close camera button.')}>{'\u2715'}</button>
+                  <button 
+                    onClick={switchCamera} 
+                    style={S.modalActionBtn} 
+                    aria-label="Switch camera lens" 
+                    tabIndex={0}
+                    onFocus={() => speak('Switch camera lens button.')}
+                  >
+                    🔄
+                  </button>
+
+                  <button 
+                    onClick={captureImage} 
+                    style={S.captureBtn} 
+                    aria-label="Capture photo" 
+                    tabIndex={0}
+                    onFocus={() => speak('Capture button. Tap to take a photo.')}
+                  >
+                    📷
+                  </button>
+
+                  <button 
+                    onClick={stopCamera} 
+                    style={S.modalActionBtn} 
+                    aria-label="Dismiss camera window" 
+                    tabIndex={0}
+                    onFocus={() => speak('Dismiss camera button.')}
+                  >
+                    ✕
+                  </button>
                 </div>
               </div>
               
-              <canvas ref={canvasRef} style={{display:'none'}} />
+              <canvas ref={canvasRef} style={{ display: 'none' }} />
             </>
           ) : (
             <>
@@ -723,7 +1037,7 @@ const ChatScreen = ({ user, onLogout }) => {
                   onFocus={() => speak(processingAction ? 'Analyzing image.' : 'Analyze and send button. Tap to process image.')}>
                   {processingAction ? 'Analyzing...' : 'Analyze & Send'}
                 </button>
-                <button onClick={() => setCapturedImage(null)} style={S.retakeBtn} aria-label="Retake photo" tabIndex={0}
+                <button onClick={handleRetakePhoto} style={S.retakeBtn} aria-label="Retake photo" tabIndex={0}
                   onFocus={() => speak('Retake button. Take another photo.')}>Retake</button>
               </div>
             </>
@@ -748,6 +1062,9 @@ const ChatScreen = ({ user, onLogout }) => {
 };
 
 function speak(text) {
+  // SILENCE GUARD: If the user is recording, block ALL incoming speech requests instantly
+  if (window.isRecordingVoice) return;
+
   if ('speechSynthesis' in window) {
     speechSynthesis.cancel();
     const u = new SpeechSynthesisUtterance(text);
@@ -755,5 +1072,14 @@ function speak(text) {
     speechSynthesis.speak(u);
   }
 }
+
+// function speak(text) {
+//   if ('speechSynthesis' in window) {
+//     speechSynthesis.cancel();
+//     const u = new SpeechSynthesisUtterance(text);
+//     u.rate = 0.9;
+//     speechSynthesis.speak(u);
+//   }
+// }
 
 export default ChatScreen;
