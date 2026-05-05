@@ -2,11 +2,10 @@ import React, { useState, useEffect, useRef } from 'react';
 import { View, Text, StyleSheet, TextInput, TouchableOpacity, ActivityIndicator } from 'react-native';
 import { GestureDetector, Gesture, Directions } from 'react-native-gesture-handler';
 import * as Speech from 'expo-speech';
-import * as LocalAuthentication from 'expo-local-authentication';
 import * as Haptics from 'expo-haptics';
 import { useAuth } from '../contexts/AuthContext';
 import BrailleInput from '../components/BrailleInput';
-import { startListeningFlow } from '../utils/audioHandler';
+import { useAudioListener } from '../utils/audioHandler';
 
 // View modes
 const VIEW = {
@@ -14,7 +13,6 @@ const VIEW = {
   NAME_INPUT: 'NAME_INPUT',
   EMAIL_INPUT: 'EMAIL_INPUT',
   PASSWORD_INPUT: 'PASSWORD_INPUT',
-  BIOMETRIC: 'BIOMETRIC',
 };
 
 // Accessibility helper: speaks when an element receives focus
@@ -32,16 +30,42 @@ export default function RegisterScreen({ navigation }) {
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
+  const [isProcessing, setIsProcessing] = useState(false); // shows "Processing..." after stop is clicked
+  const [recordingField, setRecordingField] = useState(''); // '' | 'name' | 'email' | 'password' — which field is actively recording
+  const [showPassword, setShowPassword] = useState(false); // eye icon toggle for keyboard mode
 
   const emailInputRef = useRef(null);
   const nameInputRef = useRef(null);
   const passwordInputRef = useRef(null);
-  const audioControlRef = useRef(null); // holds { stop } from startListeningFlow
+  const audioControlRef = useRef(null); // holds { stop } from useAudioListener
+  const { startListening } = useAudioListener();
 
   // Welcome message on mount
   useEffect(() => {
     Speech.speak("Registration. Choose input method. Tap 1 for Audio, 2 for Braille, 3 for Keyboard. Swipe down for Login.");
   }, []);
+
+  // Create a wrapped callback that handles both transcription result AND processing state
+  const makeAudioCallback = (setter, fieldType) => {
+    const cb = (transcribedText) => {
+      setter(transcribedText);
+      setIsRecording(false);
+      setIsProcessing(false);
+      setRecordingField('');
+    };
+    cb.__processing = (processing) => {
+      if (processing) {
+        // User clicked stop — immediately show feedback
+        setIsRecording(false);
+        setIsProcessing(true);
+      } else {
+        setIsProcessing(false);
+      }
+    };
+    // Store field type so we know how to speak the result
+    cb.__fieldType = fieldType;
+    return cb;
+  };
 
   // Handle mode selection
   const selectMode = (mode) => {
@@ -52,14 +76,13 @@ export default function RegisterScreen({ navigation }) {
     if (mode === 'audio') {
       Speech.speak("Audio mode selected. Please speak your full name.");
       setIsRecording(true);
-      startListeningFlow("temp_user", (transcribedName) => {
-        setName(transcribedName);
-        setIsRecording(false);
-      }).then((ctrl) => { audioControlRef.current = ctrl; });
+      setIsProcessing(false);
+      setRecordingField('name');
+      startListening("temp_user", makeAudioCallback(setName, 'name')).then((ctrl) => { audioControlRef.current = ctrl; });
     } else if (mode === 'braille') {
       Speech.speak("Braille mode selected. Use the dot grid to enter your full name.");
     } else {
-      Speech.speak("Keyboard mode selected. Tap the input field to type your full name.");
+      Speech.speak("Keyboard mode selected. Tap the input to type your full name.");
     }
   };
 
@@ -75,14 +98,13 @@ export default function RegisterScreen({ navigation }) {
     if (inputMode === 'audio') {
       Speech.speak("Name received. Now please speak your email address.");
       setIsRecording(true);
-      startListeningFlow("temp_user", (transcribedEmail) => {
-        setEmail(transcribedEmail);
-        setIsRecording(false);
-      }).then((ctrl) => { audioControlRef.current = ctrl; });
+      setIsProcessing(false);
+      setRecordingField('email');
+      startListening("temp_user", makeAudioCallback(setEmail, 'email')).then((ctrl) => { audioControlRef.current = ctrl; });
     } else if (inputMode === 'braille') {
       Speech.speak("Name received. Now use the dot grid to enter your email address.");
     } else {
-      Speech.speak("Name received. Now tap the input field to type your email address.");
+      Speech.speak("Name received. Now tap the input to type your email address.");
       setTimeout(() => emailInputRef.current?.focus(), 500);
     }
   };
@@ -99,14 +121,13 @@ export default function RegisterScreen({ navigation }) {
     if (inputMode === 'audio') {
       Speech.speak("Email received. Now please speak your desired password.");
       setIsRecording(true);
-      startListeningFlow("temp_user", (transcribedPassword) => {
-        setPassword(transcribedPassword);
-        setIsRecording(false);
-      }).then((ctrl) => { audioControlRef.current = ctrl; });
+      setIsProcessing(false);
+      setRecordingField('password');
+      startListening("temp_user", makeAudioCallback(setPassword, 'password')).then((ctrl) => { audioControlRef.current = ctrl; });
     } else if (inputMode === 'braille') {
       Speech.speak("Email received. Now use the dot grid to enter your password.");
     } else {
-      Speech.speak("Email received. Now tap the input field to type your password.");
+      Speech.speak("Email received. Now tap the input to type your password.");
       setTimeout(() => passwordInputRef.current?.focus(), 500);
     }
   };
@@ -125,31 +146,22 @@ export default function RegisterScreen({ navigation }) {
     Speech.speak("Going back to email input.");
   };
 
-  // Finalize registration with biometrics
+  // Complete registration — no biometric required
   const handleFinalize = async () => {
     if (!password || password.length < 3) {
       Speech.speak("Please enter a valid password, at least 3 characters.");
       return;
     }
 
-    Speech.speak("Place your finger on the scanner to secure your account.");
-    const result = await LocalAuthentication.authenticateAsync({
-      promptMessage: 'Secure Account'
-    });
-
-    if (result.success) {
-      setLoading(true);
-      try {
-        await signUpPasswordless(email, password, inputMode, name);
-        Speech.speak(`Account secured. Welcome to EyeDentify, ${name}.`);
-      } catch (error) {
-        console.error('Registration error:', error);
-        Speech.speak("Registration failed. Please try again.");
-      } finally {
-        setLoading(false);
-      }
-    } else {
-      Speech.speak("Authentication cancelled.");
+    setLoading(true);
+    try {
+      await signUpPasswordless(email, password, inputMode, name);
+      Speech.speak(`Account created. Welcome to EyeDentify, ${name}.`);
+    } catch (error) {
+      console.error('Registration error:', error);
+      Speech.speak("Registration failed. Please try again.");
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -241,9 +253,9 @@ export default function RegisterScreen({ navigation }) {
 
     if (inputMode === 'normal') {
       const labels = {
-        email: 'Email input field',
-        name: 'Name input field',
-        password: 'Password input field',
+        email: 'Email input',
+        name: 'Name input',
+        password: 'Password input',
       };
       const hints = {
         email: 'Type your email address',
@@ -260,7 +272,42 @@ export default function RegisterScreen({ navigation }) {
         name: 'default',
         password: 'default',
       };
-      const isSecure = fieldType === 'password';
+      const isSecure = fieldType === 'password' && !showPassword;
+
+      // For password field in keyboard mode, render input + eye icon together
+      if (fieldType === 'password') {
+        return (
+          <View style={styles.passwordInputWrapper}>
+            <TextInput
+              ref={inputRef}
+              style={[styles.textInput, styles.textInputWithIcon]}
+              value={fieldValue}
+              onChangeText={setPassword}
+              placeholder={placeholders[fieldType]}
+              placeholderTextColor="#888"
+              keyboardType={keyboardTypes[fieldType]}
+              autoFocus={true}
+              secureTextEntry={isSecure}
+              accessible={true}
+              accessibilityLabel={labels[fieldType]}
+              accessibilityHint={hints[fieldType]}
+              onFocus={() => speakOnFocus(`${labels[fieldType]}. ${hints[fieldType]}`)}
+            />
+            <TouchableOpacity
+              style={styles.eyeIconBtn}
+              onPress={() => {
+                setShowPassword(prev => !prev);
+                Speech.speak(showPassword ? 'Password hidden.' : 'Password revealed.');
+              }}
+              accessible={true}
+              accessibilityLabel={showPassword ? "Hide password" : "Show password"}
+              accessibilityHint="Double tap to toggle password visibility"
+            >
+              <Text style={styles.eyeIconText}>{showPassword ? '🙈' : '👁'}</Text>
+            </TouchableOpacity>
+          </View>
+        );
+      }
 
       return (
         <TextInput
@@ -289,35 +336,38 @@ export default function RegisterScreen({ navigation }) {
     return (
       <View style={styles.audioStatus}>
         <View style={styles.audioStatusInner}>
-          <Text style={[styles.audioStatusText, !isRecording && hasValue && styles.audioStatusDone]}>
-            {hasValue ? `Heard: ${values[fieldType]}` : (isRecording ? `Listening for your ${fieldType}...` : `Tap below to speak your ${fieldType}`)}
+          <Text style={[styles.audioStatusText, !isRecording && !isProcessing && hasValue && styles.audioStatusDone]}>
+            {isProcessing ? '⏳ Processing your audio...' :
+              (hasValue ? `Heard: ${values[fieldType]}` : (isRecording ? `Listening for your ${fieldType}...` : `Tap below to speak your ${fieldType}`))}
           </Text>
-          {isRecording && <ActivityIndicator size="small" color="#FF4444" style={styles.audioSpinner} />}
+          {(isRecording || isProcessing) && <ActivityIndicator size="small" color={isProcessing ? "#FF9800" : "#FF4444"} style={styles.audioSpinner} />}
         </View>
         <TouchableOpacity
           style={[
             styles.audioStopButton,
-            isRecording ? styles.audioStopButtonActive : styles.audioReRecordButton,
+            isRecording && recordingField === fieldType ? styles.audioStopButtonActive :
+              (isProcessing ? styles.audioProcessingButton : styles.audioReRecordButton),
           ]}
           onPress={() => {
-            if (isRecording && audioControlRef.current) {
-              audioControlRef.current.stop();
+            if ((isRecording && recordingField === fieldType || isProcessing) && audioControlRef.current) {
+              // During recording for THIS field: stop; during processing: already stopping, ignore
+              if (!isProcessing) {
+                audioControlRef.current.stop();
+              }
             } else {
               // Re-record: trigger listening flow again based on field type
               setIsRecording(true);
-              const handler = (val) => {
-                if (fieldType === 'name') setName(val);
-                else if (fieldType === 'email') setEmail(val);
-                else if (fieldType === 'password') setPassword(val);
-                setIsRecording(false);
-              };
-              startListeningFlow("temp_user", handler).then((ctrl) => { audioControlRef.current = ctrl; });
+              setIsProcessing(false);
+              setRecordingField(fieldType);
+              const setter = fieldType === 'name' ? setName : fieldType === 'email' ? setEmail : setPassword;
+              startListening("temp_user", makeAudioCallback(setter, fieldType)).then((ctrl) => { audioControlRef.current = ctrl; });
             }
           }}
-          disabled={loading}
+          disabled={loading || isProcessing}
         >
           <Text style={styles.audioStopButtonText}>
-            {isRecording ? '⏹ STOP' : (hasValue ? '🔄 RE-RECORD' : '🎤 START')}
+            {isProcessing ? '⏳ PROCESSING...' :
+              (isRecording && recordingField === fieldType ? '⏹ STOP' : (hasValue ? '🔄 RE-RECORD' : '🎤 START'))}
           </Text>
         </TouchableOpacity>
       </View>
@@ -442,22 +492,6 @@ export default function RegisterScreen({ navigation }) {
 
             {renderInputField(email, 'email', emailInputRef)}
 
-            {/* Speak email button — audio/braille ONLY, never shown in keyboard mode */}
-            {inputMode !== 'normal' && (
-              <TouchableOpacity
-                style={styles.speakButton}
-                onPress={() => {
-                  Speech.speak(email || 'No email entered yet.');
-                }}
-                accessible={true}
-                accessibilityLabel="Speak email button"
-                accessibilityHint="Tap to hear your email address read aloud"
-                onFocus={() => speakOnFocus('Speak email button. Tap to hear your email address read aloud.')}
-              >
-                <Text style={styles.speakButtonText}>🔊 Hear Email</Text>
-              </TouchableOpacity>
-            )}
-
             {email.length > 0 && (
               <Text style={styles.emailPreview}>Email: {email}</Text>
             )}
@@ -525,14 +559,14 @@ export default function RegisterScreen({ navigation }) {
                 onPress={handleFinalize}
                 disabled={!password || password.length < 3 || loading}
                 accessible={true}
-                accessibilityLabel="Secure account with fingerprint"
-                accessibilityHint="Tap to scan fingerprint and complete registration"
-                onFocus={() => speakOnFocus('Scan Fingerprint button. Tap to scan fingerprint and complete registration.')}
+                accessibilityLabel="Complete registration"
+                accessibilityHint="Tap to complete registration"
+                onFocus={() => speakOnFocus('Register button. Tap to complete registration.')}
               >
                 {loading ? (
                   <ActivityIndicator color="#FFF" size="small" />
                 ) : (
-                  <Text style={styles.actionButtonText}>Scan Fingerprint</Text>
+                  <Text style={styles.actionButtonText}>Register</Text>
                 )}
               </TouchableOpacity>
             </View>
@@ -548,7 +582,7 @@ export default function RegisterScreen({ navigation }) {
         {loading && (
           <View style={styles.loadingOverlay}>
             <ActivityIndicator size="large" color="#6C63FF" />
-            <Text style={styles.loadingText}>Securing your account...</Text>
+            <Text style={styles.loadingText}>Creating your account...</Text>
           </View>
         )}
       </View>
@@ -685,6 +719,11 @@ const styles = StyleSheet.create({
     borderColor: '#FF4444',
     borderWidth: 1.5,
   },
+  audioProcessingButton: {
+    backgroundColor: 'rgba(255, 152, 0, 0.15)',
+    borderColor: '#FF9800',
+    borderWidth: 1.5,
+  },
   audioReRecordButton: {
     backgroundColor: 'rgba(108, 99, 255, 0.15)',
     borderColor: '#6C63FF',
@@ -749,6 +788,28 @@ const styles = StyleSheet.create({
     color: '#6C63FF',
     fontSize: 15,
     fontWeight: '600',
+  },
+  // Password input with eye icon (keyboard mode)
+  passwordInputWrapper: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    width: '100%',
+    marginBottom: 20,
+  },
+  textInputWithIcon: {
+    flex: 1,
+  },
+  eyeIconBtn: {
+    position: 'absolute',
+    right: 12,
+    height: 44,
+    width: 44,
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 1,
+  },
+  eyeIconText: {
+    fontSize: 20,
   },
   gestureHint: {
     color: '#666',

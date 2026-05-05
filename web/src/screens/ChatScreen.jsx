@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { isSpeechSupported, startRecording, stopRecording } from '../utils/whisper';
-import { sendChatMessage, processImage, getChatHistory } from '../services/apiService';
+import { sendChatMessage, sendChatMessageWithAudio, processImage, getChatHistory, getTTSAudio } from '../services/apiService';
 
 const ChatScreen = ({ user, onLogout }) => {
   // Capture userId once — never changes during session, avoids "unknown" fallback
@@ -19,6 +19,30 @@ const ChatScreen = ({ user, onLogout }) => {
     if (!id) throw new Error('Not logged in — no valid user session found');
     return id;
   };
+
+  /**
+   * Play base64-encoded MP3 audio from backend TTS.
+   * Returns true if playback started, false if no audio data.
+   */
+  const playBackendTTS = useCallback((audioBase64) => {
+    if (!audioBase64) return false;
+    try {
+      const binaryStr = atob(audioBase64);
+      const bytes = new Uint8Array(binaryStr.length);
+      for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i);
+      const blob = new Blob([bytes], { type: 'audio/mp3' });
+      const url = URL.createObjectURL(blob);
+      const audio = new Audio(url);
+      audio.volume = 1.0;
+      audio.play().catch(e => console.warn('[TTS] Autoplay blocked or failed:', e.message));
+      // Clean up object URL after audio finishes
+      audio.onended = () => URL.revokeObjectURL(url);
+      return true;
+    } catch (err) {
+      console.warn('[TTS] Backend audio playback failed:', err.message);
+      return false;
+    }
+  }, []);
   const [messages, setMessages] = useState([]);
   const [inputText, setInputText] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -132,13 +156,15 @@ const ChatScreen = ({ user, onLogout }) => {
 
     try {
       const userId = requireUid();
-      console.log('[Chat] Sending message to backend:', text ? text.substring(0, 50) : '(no text)', imageBase64 ? '(with image)' : '');
-      const response = await sendChatMessage(userId, text, imageBase64);
-      console.log('[Chat] Backend response:', JSON.stringify(response).substring(0, 200));
+      console.log('[Chat] Sending message to backend (with TTS):', text ? text.substring(0, 50) : '(no text)', imageBase64 ? '(with image)' : '');
+      
+      // Use send-audio endpoint to get both response text AND TTS audio
+      const response = await sendChatMessageWithAudio(userId, text);
+      console.log('[Chat] Backend+TTS response:', JSON.stringify(response).substring(0, 200));
 
       let botText = '';
       let botImage = null;
-      let botAudioUrl = null;
+      let botAudioB64 = null;
 
       if (response.ai_response) botText = response.ai_response;
       else if (response.response) botText = response.response;
@@ -150,14 +176,18 @@ const ChatScreen = ({ user, onLogout }) => {
       }
 
       if (response.processedImage) botImage = response.processedImage;
-      if (response.audio_url) botAudioUrl = response.audio_url;
+      if (response.audio_base64) botAudioB64 = response.audio_base64;
+      if (response.audio_url) botImage = response.audio_url;
 
-      const botMsg = { role: 'assistant', text: botText, image: botImage, audioUrl: botAudioUrl, timestamp: Date.now() };
+      const botMsg = { role: 'assistant', text: botText, image: botImage, audioBase64: botAudioB64, timestamp: Date.now() };
       setMessages(prev => [...prev, botMsg]);
       
-      // Speak the AI reply aloud for accessibility
+      // Play backend TTS audio (high-quality edge-tts MP3)
+      // Falls back to browser SpeechSynthesis if backend audio is empty
       if (botText && !botText.startsWith('Error:')) {
-        speak(botText);
+        if (!playBackendTTS(botAudioB64)) {
+          speak(botText); // fallback to browser TTS
+        }
       }
     } catch (error) {
       console.error('Send error:', error);
@@ -166,7 +196,7 @@ const ChatScreen = ({ user, onLogout }) => {
     } finally {
       setIsLoading(false);
     }
-  }, [inputText, user]);
+  }, [inputText, user, playBackendTTS]);
 
   const handleCaptureAndSend = async () => {
     if (!capturedImage) return;
@@ -196,9 +226,16 @@ const ChatScreen = ({ user, onLogout }) => {
       };
       setMessages(prev => [...prev, botMsg]);
 
-      // Speak the AI description aloud
+      // Speak the AI description aloud using backend TTS (fallback to browser TTS)
       if (description) {
-        speak(description);
+        try {
+          const ttsResp = await getTTSAudio(description);
+          if (!playBackendTTS(ttsResp.audio_base64)) {
+            speak(description); // fallback
+          }
+        } catch {
+          speak(description); // fallback on any error
+        }
       }
     } catch (error) {
       console.error('Vision error:', error);
@@ -439,6 +476,21 @@ const ChatScreen = ({ user, onLogout }) => {
                     {msg.image && <img src={msg.image} alt="Captured image" style={styles.msgImage} />}
                     {msg.imageUri && !msg.image && <img src={msg.imageUri} alt="Stored captured image" style={styles.msgImage} />}
                     {msg.audioUrl && <audio src={msg.audioUrl} controls style={styles.audioPlayer} aria-label="Audio response from AI" />}
+                    {msg.audioBase64 && (
+                      <div style={{ marginTop: 8 }}>
+                        <audio
+                          controls
+                          style={styles.audioPlayer}
+                          aria-label="AI voice response (TTS)"
+                          src={`data:audio/mp3;base64,${msg.audioBase64.substring(0, 50)}...`}
+                          ref={(el) => {
+                            if (el && msg.audioBase64) {
+                              el.src = `data:audio/mp3;base64,${msg.audioBase64}`;
+                            }
+                          }}
+                        />
+                      </div>
+                    )}
                   </div>
                   <div style={styles.msgTime} aria-hidden="true">{formatTime(msg.timestamp)}</div>
                 </div>

@@ -5,7 +5,7 @@ import * as Speech from 'expo-speech';
 import * as Haptics from 'expo-haptics';
 import { useAuth } from '../contexts/AuthContext';
 import BrailleInput from '../components/BrailleInput';
-import { startListeningFlow } from '../utils/audioHandler';
+import { useAudioListener } from '../utils/audioHandler';
 
 // Accessibility helper: speaks when an element receives focus
 const speakOnFocus = (message) => {
@@ -15,7 +15,6 @@ const speakOnFocus = (message) => {
 
 // View modes
 const VIEW = {
-  CHECKING: 'CHECKING',
   MODE_PICKER: 'MODE_PICKER',
   EMAIL_INPUT: 'EMAIL_INPUT',
   PASSWORD_INPUT: 'PASSWORD_INPUT',
@@ -23,29 +22,41 @@ const VIEW = {
 
 export default function LoginScreen({ navigation }) {
   const { signIn, inputMode, setInputMode } = useAuth();
-  const [view, setView] = useState(VIEW.CHECKING);
+  const [view, setView] = useState(VIEW.MODE_PICKER);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
+  const [isRecording, setIsRecording] = useState(false);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [recordingField, setRecordingField] = useState('');
   const emailInputRef = useRef(null);
   const passwordInputRef = useRef(null);
+  const audioControlRef = useRef(null);
+  const { startListening } = useAudioListener();
 
-  // Initial check for saved account (email only — no stored password)
+  // Welcome message on mount — no storage check needed
   useEffect(() => {
-    checkAccount();
+    Speech.speak("Login. Tap once for Audio, twice for Braille, three times for Keyboard. Swipe down for Registration.");
   }, []);
 
-  const checkAccount = async () => {
-    const { AsyncStorage } = await import('@react-native-async-storage/async-storage');
-    const savedEmail = await AsyncStorage.getItem('saved_email');
-    if (savedEmail) {
-      setEmail(savedEmail);
-      Speech.speak("Welcome back. Enter your password to login.");
-      setView(VIEW.PASSWORD_INPUT);
-    } else {
-      setView(VIEW.MODE_PICKER);
-      Speech.speak("No account found. Tap once for Audio, twice for Braille, three times for Keyboard. Swipe down for Registration.");
-    }
+  // Create a wrapped callback that handles both transcription result AND processing state
+  const makeAudioCallback = (setter, fieldType) => {
+    const cb = (transcribedText) => {
+      setter(transcribedText);
+      setIsRecording(false);
+      setIsProcessing(false);
+      setRecordingField('');
+    };
+    cb.__processing = (processing) => {
+      if (processing) {
+        setIsRecording(false);
+        setIsProcessing(true);
+      } else {
+        setIsProcessing(false);
+      }
+    };
+    cb.__fieldType = fieldType;
+    return cb;
   };
 
   // Handle mode selection
@@ -56,13 +67,14 @@ export default function LoginScreen({ navigation }) {
 
     if (mode === 'audio') {
       Speech.speak("Audio mode selected. Please speak your email address.");
-      startListeningFlow("temp_user", (transcribedEmail) => {
-        setEmail(transcribedEmail);
-      });
+      setIsRecording(true);
+      setIsProcessing(false);
+      setRecordingField('email');
+      startListening("temp_user", makeAudioCallback(setEmail, 'email')).then((ctrl) => { audioControlRef.current = ctrl; });
     } else if (mode === 'braille') {
       Speech.speak("Braille mode selected. Use the dot grid to enter your email.");
     } else {
-      Speech.speak("Keyboard mode selected. Tap the input field to type your email.");
+      Speech.speak("Keyboard mode selected. Tap the input to type your email.");
     }
   };
 
@@ -86,13 +98,14 @@ export default function LoginScreen({ navigation }) {
 
     if (inputMode === 'audio') {
       Speech.speak("Email received. Now please speak your password.");
-      startListeningFlow("temp_user", (transcribedPassword) => {
-        setPassword(transcribedPassword);
-      });
+      setIsRecording(true);
+      setIsProcessing(false);
+      setRecordingField('password');
+      startListening("temp_user", makeAudioCallback(setPassword, 'password')).then((ctrl) => { audioControlRef.current = ctrl; });
     } else if (inputMode === 'braille') {
       Speech.speak("Email received. Now use the dot grid to enter your password.");
     } else {
-      Speech.speak("Email received. Now tap the input field to type your password.");
+      Speech.speak("Email received. Now tap the input to type your password.");
       setTimeout(() => passwordInputRef.current?.focus(), 500);
     }
   };
@@ -177,9 +190,7 @@ export default function LoginScreen({ navigation }) {
 
   // Compose gestures based on current view
   let composedGestures;
-  if (view === VIEW.CHECKING) {
-    composedGestures = Gesture.Exclusive(swipeDown);
-  } else if (view === VIEW.MODE_PICKER) {
+  if (view === VIEW.MODE_PICKER) {
     composedGestures = Gesture.Exclusive(swipeDown, tap3, tap2, tap1);
   } else if (view === VIEW.EMAIL_INPUT || view === VIEW.PASSWORD_INPUT) {
     composedGestures = Gesture.Exclusive(swipeDown, swipeLeft);
@@ -191,7 +202,7 @@ export default function LoginScreen({ navigation }) {
   // RENDER HELPERS
   // ============================================================
 
-  // Render appropriate input field based on current mode and field type
+  // Render appropriate input based on current mode and field type
   const renderInputField = (fieldValue, fieldType, inputRef) => {
     if (inputMode === 'braille') {
       const setters = {
@@ -212,8 +223,8 @@ export default function LoginScreen({ navigation }) {
 
     if (inputMode === 'normal') {
       const labels = {
-        email: 'Email input field',
-        password: 'Password input field',
+        email: 'Email input',
+        password: 'Password input',
       };
       const hints = {
         email: 'Type your email address',
@@ -248,14 +259,45 @@ export default function LoginScreen({ navigation }) {
       );
     }
 
-    // Audio mode - show transcription status
+    // Audio mode - show transcription status with Stop/Re-record control
     const values = { email, password };
+    const hasValue = !!values[fieldType];
+
     return (
       <View style={styles.audioStatus}>
-        <Text style={styles.audioStatusText}>
-          {values[fieldType] ? `Heard: ${values[fieldType]}` : `Listening for your ${fieldType}...`}
-        </Text>
-        <ActivityIndicator size="small" color="#6C63FF" style={styles.audioSpinner} />
+        <View style={styles.audioStatusInner}>
+          <Text style={[styles.audioStatusText, !isRecording && !isProcessing && hasValue && styles.audioStatusDone]}>
+            {isProcessing ? '⏳ Processing your audio...' :
+              (hasValue ? `Heard: ${values[fieldType]}` : (isRecording ? `Listening for your ${fieldType}...` : `Tap below to speak your ${fieldType}`))}
+          </Text>
+          {(isRecording || isProcessing) && <ActivityIndicator size="small" color={isProcessing ? "#FF9800" : "#FF4444"} style={styles.audioSpinner} />}
+        </View>
+        <TouchableOpacity
+          style={[
+            styles.audioStopButton,
+            isRecording && recordingField === fieldType ? styles.audioStopButtonActive :
+              (isProcessing ? styles.audioProcessingButton : styles.audioReRecordButton),
+          ]}
+          onPress={() => {
+            if ((isRecording && recordingField === fieldType || isProcessing) && audioControlRef.current) {
+              if (!isProcessing) {
+                audioControlRef.current.stop();
+              }
+            } else {
+              setIsRecording(true);
+              setIsProcessing(false);
+              setRecordingField(fieldType);
+              const setter = fieldType === 'email' ? setEmail : setPassword;
+              startListening("temp_user", makeAudioCallback(setter, fieldType)).then((ctrl) => { audioControlRef.current = ctrl; });
+            }
+          }}
+          disabled={loading || isProcessing}
+        >
+          <Text style={styles.audioStopButtonText}>
+            {isProcessing ? '⏳ PROCESSING...' :
+              (isRecording && recordingField === fieldType ? '⏹ STOP' : (hasValue ? '🔄 RE-RECORD' : '🎤 START'))}
+          </Text>
+        </TouchableOpacity>
       </View>
     );
   };
@@ -275,16 +317,6 @@ export default function LoginScreen({ navigation }) {
         >
           EyeDentify
         </Text>
-
-        {/* Checking view */}
-        {view === VIEW.CHECKING && (
-          <View style={styles.checkingView}>
-            <ActivityIndicator size="large" color="#6C63FF" />
-            <Text style={styles.checkingText}>
-              Checking for saved account...
-            </Text>
-          </View>
-        )}
 
         {/* Mode Picker View */}
         {view === VIEW.MODE_PICKER && (
@@ -345,24 +377,6 @@ export default function LoginScreen({ navigation }) {
 
             {renderInputField(email, 'email', emailInputRef)}
 
-            {/* Speak email button — audio/braille ONLY */}
-            {inputMode !== 'normal' && (
-              <TouchableOpacity
-                style={styles.speakButton}
-                onPress={() => {
-                  Speech.speak(email || 'No email entered yet.');
-                }}
-                accessible={true}
-                focusable={true}
-                accessibilityRole="button"
-                accessibilityLabel="Hear Email button"
-                accessibilityHint="Tap to hear your email address read aloud"
-                onFocus={() => speakOnFocus('Hear Email button. Tap to hear your email address read aloud.')}
-              >
-                <Text style={styles.speakButtonText}>Hear Email</Text>
-              </TouchableOpacity>
-            )}
-
             {email.length > 0 && (
               <Text style={styles.previewText}>Email: {email}</Text>
             )}
@@ -413,25 +427,6 @@ export default function LoginScreen({ navigation }) {
             <Text style={styles.emailPreview}>Email: {email}</Text>
 
             {renderInputField(password, 'password', passwordInputRef)}
-
-            {/* Speak password hint — audio/braille ONLY */}
-            {inputMode !== 'normal' && (
-              <TouchableOpacity
-                style={styles.speakButton}
-                onPress={() => {
-                  const masked = '*'.repeat(password.length);
-                  Speech.speak(password ? `Password entered: ${masked} characters` : 'No password entered yet.');
-                }}
-                accessible={true}
-                focusable={true}
-                accessibilityRole="button"
-                accessibilityLabel="Password info button"
-                accessibilityHint="Tap to hear how many characters you've entered"
-                onFocus={() => speakOnFocus('Password info button. Tap to hear how many characters you have entered.')}
-              >
-                <Text style={styles.speakButtonText}>{password ? `Password: ${'*'.repeat(password.length)}` : 'No password'}</Text>
-              </TouchableOpacity>
-            )}
 
             <View style={styles.buttonRow}>
               <TouchableOpacity
@@ -582,7 +577,6 @@ const styles = StyleSheet.create({
   },
   audioStatus: {
     width: '100%',
-    height: 55,
     backgroundColor: 'rgba(76, 175, 80, 0.1)',
     borderRadius: 12,
     borderWidth: 1.5,
@@ -590,8 +584,14 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     marginBottom: 20,
-    flexDirection: 'row',
     paddingHorizontal: 15,
+    paddingVertical: 12,
+  },
+  audioStatusInner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 10,
   },
   audioStatusText: {
     color: '#4CAF50',
@@ -599,8 +599,38 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     marginRight: 10,
   },
+  audioStatusDone: {
+    color: '#4ADE80',
+  },
   audioSpinner: {
     marginLeft: 10,
+  },
+  audioStopButton: {
+    width: '100%',
+    height: 44,
+    borderRadius: 10,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  audioStopButtonActive: {
+    backgroundColor: 'rgba(255, 68, 68, 0.2)',
+    borderColor: '#FF4444',
+    borderWidth: 1.5,
+  },
+  audioProcessingButton: {
+    backgroundColor: 'rgba(255, 152, 0, 0.15)',
+    borderColor: '#FF9800',
+    borderWidth: 1.5,
+  },
+  audioReRecordButton: {
+    backgroundColor: 'rgba(108, 99, 255, 0.15)',
+    borderColor: '#6C63FF',
+    borderWidth: 1.5,
+  },
+  audioStopButtonText: {
+    fontSize: 15,
+    fontWeight: '700',
+    letterSpacing: 1,
   },
   emailPreview: {
     color: '#8E8EA0',

@@ -1,12 +1,43 @@
-import * as ExpoAudio from 'expo-audio';
+import { useRef, useCallback } from 'react';
+import { useAudioRecorder, RecordingPresets, setAudioModeAsync,
+  INTERRUPTION_MODE_IOS_DO_NOT_MIX, INTERRUPTION_MODE_ANDROID_DO_NOT_MIX } from 'expo-audio';
 import * as Speech from 'expo-speech';
 import * as Haptics from 'expo-haptics';
-import * as FileSystem from 'expo-file-system';
+import * as FileSystemLegacy from 'expo-file-system/legacy';
 import { agentInteract } from '../services/apiService';
 
 /**
+ * Speak text with options optimized for background/lock-screen playback.
+ */
+const speak = (text, options = {}) => {
+  if (!text) return;
+  Speech.speak(text, {
+    rate: 0.9,
+    volume: 1.0,
+    pitch: 1.0,
+    ...options,
+  });
+};
+
+/**
+ * Ensure audio session is active and configured for background playback.
+ */
+const ensureAudioSession = async () => {
+  try {
+    await setAudioModeAsync({
+      playsInSilentModeIOS: true,
+      staysActiveInBackground: true,
+      interruptionModeIOS: INTERRUPTION_MODE_IOS_DO_NOT_MIX,
+      interruptionModeAndroid: INTERRUPTION_MODE_ANDROID_DO_NOT_MIX,
+      shouldDuckAndroid: false,
+    });
+  } catch (e) {
+    console.warn('[Audio] Session re-apply warning:', e.message);
+  }
+};
+
+/**
  * waitForSpeechDone - Polls expo-speech until TTS finishes.
- * Returns a promise that resolves when no longer speaking.
  */
 const waitForSpeechDone = async () => {
   await new Promise((r) => setTimeout(r, 200));
@@ -19,99 +50,141 @@ const waitForSpeechDone = async () => {
 };
 
 /**
- * startListeningFlow - Handles microphone permissions, recording, and backend transcription.
+ * useAudioListener - Custom hook for microphone recording + backend transcription.
  *
- * Does NOT call Speech.speak() before recording — the caller must speak its
- * prompt FIRST. Waits for TTS to finish so the mic captures only user voice.
+ * Uses expo-audio v1's useAudioRecorder hook (works in Expo Go).
  *
- * RETURNS: { stop } — call stop() to manually end recording early (e.g., Stop button).
+ * RETURNS: { startListening } — call startListening(userId, onTranscriptionReceived)
+ *          Returns a { stop } object for manual early termination.
+ *
+ * Usage in component:
+ *   const { startListening } = useAudioListener();
+ *   // Later:
+ *   const ctrl = await startListening(userId, callback);
+ *   ctrl.stop(); // optional early stop
  */
-export const startListeningFlow = async (userId, onTranscriptionReceived) => {
-  let recording = null;
-  let autoStopTimer = null;
-  let isFinished = false;
+export const useAudioListener = () => {
+  const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
+  const isFinishedRef = useRef(false);
+  const callbackRef = useRef(null);
 
-  const finishRecording = async () => {
-    if (isFinished) return;
-    isFinished = true;
+  const startListening = useCallback(async (userId, onTranscriptionReceived) => {
+    callbackRef.current = onTranscriptionReceived;
+    isFinishedRef.current = false;
 
-    if (autoStopTimer) {
-      clearTimeout(autoStopTimer);
-      autoStopTimer = null;
-    }
+    const finishRecording = async () => {
+      // Guard: prevent double-stop (manual + auto-stop race)
+      if (isFinishedRef.current) return;
+      isFinishedRef.current = true;
 
-    try {
-      if (!recording) return;
+      const cb = callbackRef.current;
+      if (typeof cb === 'function') {
+        cb.__processing?.(true);
+      }
 
-      // Stop recording — try modern API first, fallback to legacy
       try {
-        if (typeof recording.stopAndUnloadAsync === 'function') {
-          await recording.stopAndUnloadAsync();
-        } else if (typeof recording.stop === 'function') {
-          await recording.stop();
+        if (!recorder || !recorder.isRecording) return;
+
+        // Stop recorder
+        await recorder.stop();
+
+        const uri = recorder.uri;
+        if (!uri) {
+          cb?.__processing?.(false);
+          return;
         }
-      } catch (stopErr) {
-        console.warn('[Audio] Recording stop warning:', stopErr.message);
+
+        const base64 = await FileSystemLegacy.readAsStringAsync(uri, {
+          encoding: FileSystemLegacy.EncodingType?.Base64 || 'base64',
+        });
+
+        speak('Processing.');
+        await waitForSpeechDone();
+
+        const result = await agentInteract(userId, { audioBase64: base64 });
+
+        if (result && result.audio_text) {
+          cb(result.audio_text);
+          const isPassword = cb.__fieldType === 'password';
+          if (isPassword) {
+            const dotCount = result.audio_text.length;
+            speak(`Password received. ${dotCount} characters.`);
+          } else {
+            speak(`I heard: ${result.audio_text}`);
+          }
+          ensureAudioSession();
+        } else {
+          cb('');
+        }
+      } catch (error) {
+        console.error('[Audio] Error finishing recording:', error.message);
+        cb?.('');
+      } finally {
+        cb?.__processing?.(false);
       }
-
-      const uri = recording.getURI ? recording.getURI() : recording.uri;
-      if (!uri) return;
-
-      const base64 = await FileSystem.readAsStringAsync(uri, {
-        encoding: FileSystem.EncodingType.Base64,
-      });
-
-      Speech.speak('Processing.');
-
-      const result = await agentInteract(userId, { audioBase64: base64 });
-
-      if (result && result.audio_text) {
-        onTranscriptionReceived(result.audio_text);
-        Speech.speak(`I heard: ${result.audio_text}`);
-      }
-    } catch (error) {
-      console.error('[Audio] Error finishing recording:', error.message);
-    }
-  };
-
-  try {
-    // Request mic permission
-    const permissionFn = ExpoAudio.requestMicrophonePermissionsAsync
-      || ExpoAudio.requestPermissionsAsync;
-    const permission = await permissionFn();
-
-    if (!permission.granted) {
-      Speech.speak('Microphone permission denied.');
-      return { stop: () => {} };
-    }
-
-    // Wait for any ongoing speech before opening mic
-    await waitForSpeechDone();
-
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    Speech.speak('Listening.');
-    await waitForSpeechDone();
-
-    // Start recording using the same API as before
-    recording = await ExpoAudio.recordAsync();
-
-    // Auto-stop after 4 seconds
-    autoStopTimer = setTimeout(() => {
-      console.log('[Audio] Auto-stop triggered after 4s');
-      finishRecording();
-    }, 4000);
-
-    // Return control object for manual stop
-    return {
-      stop: () => {
-        console.log('[Audio] Manual stop requested by user');
-        finishRecording();
-      },
     };
 
-  } catch (error) {
-    console.error('Audio Error:', error.message);
-    Speech.speak('Audio system error.');
-    return { stop: () => {} };
-  }
+    try {
+      // Request mic permission — try expo-audio v1 API, fallback to recorder.prepare
+      let permissionGranted = false;
+      try {
+        const AudioModule = require('expo-audio').AudioModule;
+        if (AudioModule && typeof AudioModule.requestRecordingPermissionsAsync === 'function') {
+          const perm = await AudioModule.requestRecordingPermissionsAsync();
+          permissionGranted = !!perm?.granted;
+        }
+      } catch (permErr) {
+        console.log('[Audio] requestRecordingPermissionsAsync not available, trying prepareToRecord...');
+      }
+
+      if (!permissionGranted) {
+        // Fallback: prepareToRecordAsync will also trigger the permission prompt
+        try {
+          await recorder.prepareToRecordAsync(RecordingPresets.HIGH_QUALITY);
+          permissionGranted = true;
+        } catch (prepErr) {
+          console.warn('[Audio] Permission denied via prepare:', prepErr.message);
+        }
+      }
+
+      if (!permissionGranted) {
+        speak('Microphone permission denied.');
+        return { stop: () => {} };
+      }
+
+      // Wait for any ongoing speech before opening mic
+      await waitForSpeechDone();
+
+      // Configure audio mode for recording
+      await setAudioModeAsync({ allowsRecording: true, playsInSilentModeIOS: true });
+
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      speak('Listening.');
+      await waitForSpeechDone();
+
+      // Start recording — if not already prepared, prepare first
+      if (!recorder.isPrepared) {
+        await recorder.prepareToRecordAsync(RecordingPresets.HIGH_QUALITY);
+      }
+      recorder.record();
+
+      // No auto-stop — user controls when to stop via returned .stop()
+      console.log('[Audio] Recording started. Waiting for manual stop.');
+
+      // Return control object for manual stop
+      return {
+        stop: () => {
+          console.log('[Audio] Manual stop requested by user');
+          finishRecording();
+        },
+      };
+
+    } catch (error) {
+      console.error('Audio Error:', error.message);
+      speak('Audio system error.');
+      return { stop: () => {} };
+    }
+  }, [recorder]);
+
+  return { startListening };
 };

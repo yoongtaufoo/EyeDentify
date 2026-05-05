@@ -3,7 +3,7 @@
  * All backend communication goes through this module.
  */
 
-const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8000';
+const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || '';
 
 // ============================================================
 // AUTH
@@ -137,4 +137,43 @@ export async function getChatHistory(userId) {
     console.error('[API] History load error:', error.message);
     return [];
   }
+}
+
+// ============================================================
+// TTS - Text-to-Speech (backend-generated audio)
+// ============================================================
+
+export async function getTTSAudio(text, voice = null) {
+  const formData = new FormData();
+  formData.append('text', text);
+  if (voice) formData.append('voice', voice);
+
+  const response = await fetch(`${BACKEND_URL}/chat/tts`, {
+    method: 'POST',
+    body: formData,
+  });
+
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || 'TTS generation failed');
+  return data; // { audio_base64, format: "mp3", success }
+}
+
+export async function sendChatMessageWithAudio(userId, message, options = {}) {
+  const { memoryId, description } = options;
+
+  const formData = new FormData();
+  formData.append('user_id', userId);
+  formData.append('message', message);
+  if (memoryId) formData.append('current_memory_id', memoryId);
+  if (description) formData.append('current_description', description);
+
+  const response = await fetch(`${BACKEND_URL}/chat/send-audio`, {
+    method: 'POST',
+    body: formData,
+  });
+
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || 'Chat+Audio failed');
+  // Returns: { response, audio_base64, audio_text }
+  return data;
 }

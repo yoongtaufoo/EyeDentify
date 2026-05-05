@@ -6,7 +6,7 @@
  * what audio formats the browser supports or what's installed on the server.
  */
 
-const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8000';
+const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || '';
 
 let mediaRecorder = null;
 let audioChunks = [];

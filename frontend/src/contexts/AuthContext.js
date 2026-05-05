@@ -488,7 +488,6 @@
 
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import * as Speech from 'expo-speech';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from '../lib/supabaseClient';
 import { signup as apiSignup } from '../services/apiService';
 
@@ -502,8 +501,6 @@ export function AuthProvider({ children }) {
   useEffect(() => {
     const init = async () => {
       const { data: { session } } = await supabase.auth.getSession();
-      const savedMode = await AsyncStorage.getItem('input_mode');
-      if (savedMode) setInputMode(savedMode);
       setUser(session?.user ?? null);
       setLoading(false);
     };
@@ -538,10 +535,6 @@ export function AuthProvider({ children }) {
       throw error;
     }
 
-    // Only save non-sensitive data (NO password stored locally)
-    await AsyncStorage.setItem('saved_email', email);
-    await AsyncStorage.setItem('input_mode', inputMode);
-
     // Sync with backend to create DB profile (stores real password in DB)
     try {
       await apiSignup(email, password, displayName, inputMode);
@@ -569,10 +562,6 @@ export function AuthProvider({ children }) {
   const signOut = useCallback(async () => {
     try {
       await supabase.auth.signOut();
-
-      // Clear all local data (no password was ever stored)
-      await AsyncStorage.removeItem('saved_email');
-      await AsyncStorage.removeItem('input_mode');
 
       setUser(null);
       setInputMode(null);

@@ -42,10 +42,42 @@ You are helpful, concise, and safety-conscious. Key guidelines:
 
 1. Always prioritize safety - warn about hazards proactively.
 2. Use descriptive spatial language (left/right/near/far).
-3. Be concise - screen readers will read your responses aloud.
-4. When referencing memories/images the user has captured, use past tense.
-5. If the user asks about what they've seen before, reference their memory logs.
-6. Be warm and supportive. Your user may rely on you for independence."""
+3. Be VERY concise - respond in 1-2 short sentences maximum. Screen readers will read your responses aloud.
+4. NEVER output your reasoning, thought process, or internal monologue. Output ONLY the final user-facing response.
+5. Do NOT use bullet points, numbered lists, or options like "Option 1/Option 2". Just answer directly.
+6. When referencing memories/images the user has captured, use past tense.
+7. If the user asks about what they've seen before, reference their memory logs.
+8. Be warm and supportive. Your user may rely on you for independence."""
+
+
+def _strip_reasoning(text: str) -> str:
+    """Remove leaked chain-of-thought / reasoning from model output."""
+    import re
+    original = text
+
+    # Remove patterns like "* Previous context:", "* User just...", "* This could mean:"
+    lines = text.split('\n')
+    cleaned = []
+    for line in lines:
+        stripped = line.strip()
+        # Skip lines that look like internal reasoning
+        if not stripped:
+            continue
+        if stripped.startswith(('* ')) or stripped.startswith('*'):
+            lower = stripped.lower()
+            if any(kw in lower for kw in [
+                'previous context', 'user ', 'assistant', 'this could',
+                'option', 'they are', 'the user is', 'acknowledge', 'since an',
+                'link the greeting', 'testing', 'get attention', 'start new',
+                'contextual', 'simple'
+            ]):
+                continue
+        cleaned.append(line)
+
+    result = '\n'.join(cleaned).strip()
+    if not result:
+        return original  # fallback if we stripped everything
+    return result
 
 
 async def _call_glm(system_prompt: str, user_content: str) -> str:
@@ -78,10 +110,12 @@ async def _ask_llm(user_prompt: str, system_prompt_override: str = None) -> str:
     Call LLM with automatic fallback:
       1. Try GLM first
       2. On 429 / connection error → fall back to Gemma 4
+      3. Strip any leaked reasoning from output
     """
     sys = system_prompt_override or SYSTEM_PROMPT
     try:
-        return await _call_glm(sys, user_prompt)
+        raw = await _call_glm(sys, user_prompt)
+        return _strip_reasoning(raw)
     except Exception as e:
         err_str = str(e)
         if "429" in err_str or "rate" in err_str.lower() or "connection" in err_str.lower():
@@ -90,7 +124,8 @@ async def _ask_llm(user_prompt: str, system_prompt_override: str = None) -> str:
                 # Run sync gemma call in executor to avoid blocking event loop
                 import asyncio
                 loop = asyncio.get_event_loop()
-                return await loop.run_in_executor(None, _call_gemma, user_prompt)
+                raw = await loop.run_in_executor(None, _call_gemma, user_prompt)
+                return _strip_reasoning(raw)
             except Exception as gemma_err:
                 print(f"[Chat] Gemma fallback also failed: {gemma_err}")
                 return "I'm having trouble connecting right now. Please try again in a moment."

@@ -262,8 +262,18 @@ export default function ChatScreen() {
   };
 
   // ============================================================
-  // AUDIO RECORDING (Expo Go compatible — sends to backend for STT)
+  // AUDIO RECORDING (Tap to start → Tap to stop — no auto-stop)
   // ============================================================
+  const toggleRecording = async () => {
+    if (isRecording) {
+      // --- STOP ---
+      await stopRecordingAndSend();
+    } else {
+      // --- START ---
+      await startRecording();
+    }
+  };
+
   const startRecording = async () => {
     try {
       const perm = await AudioModule.requestRecordingPermissionsAsync();
@@ -278,7 +288,7 @@ export default function ChatScreen() {
       await recorder.prepareToRecordAsync();
       recorder.record();
       setIsRecording(true);
-      Speech.speak('Recording...');
+      Speech.speak('Recording. Tap stop when done.');
     } catch (error) {
       console.error('Recording start error:', error);
       Speech.speak('Could not start recording.');
@@ -308,6 +318,8 @@ export default function ChatScreen() {
           timestamp: new Date().toISOString(),
         };
         setMessages((prev) => [...prev, voiceMsg]);
+
+        Speech.speak('Processing audio.');
 
         // Send to backend for transcription + AI response
         const result = await sendAudioMessage(user.id, base64);
@@ -442,16 +454,8 @@ export default function ChatScreen() {
     })
     .runOnJS(true);
 
-  // 3) Long press on mic button → Record audio
-  const chatLongPressRecord = Gesture.LongPress()
-    .minDuration(300)
-    .onStart(() => {
-      startRecording();
-    })
-    .onEnd(() => {
-      stopRecordingAndSend();
-    })
-    .runOnJS(true);
+  // 3) Tap mic button → Start/Stop recording
+  //    (No long-press needed — toggle via onPress)
 
   // --- CAMERA VIEW GESTURES ---
 
@@ -776,40 +780,41 @@ export default function ChatScreen() {
                   onSubmitEditing={handleSendText}
                   blurOnSubmit={false}
                   accessible={true}
-                  accessibilityLabel="Message input field"
+                  accessibilityLabel="Message input"
                   accessibilityHint="Type your question and press enter to send"
-                  onFocus={() => speakOnFocus('Message input field. Type your question and press enter to send.')}
+                  onFocus={() => speakOnFocus('Message input. Type your question and press enter to send.')}
                 />
 
-                {/* Long-press to Record Button */}
-                <GestureDetector gesture={chatLongPressRecord}>
-                  <View
-                    style={[
-                      styles.recordButton,
-                      isRecording && styles.recordButtonActive,
-                    ]}
-                    accessible={true}
-                    focusable={true}
-                    accessibilityRole="button"
-                    accessibilityLabel={
-                      isRecording
-                        ? 'Recording, release to send'
-                        : 'Voice record button'
-                    }
-                    accessibilityHint={
-                      isRecording
-                        ? 'Release to stop recording and send'
-                        : 'Press and hold to record a voice message'
-                    }
-                    onFocus={() => speakOnFocus(isRecording
-                      ? 'Recording button. Release to stop recording and send.'
-                      : 'Voice record button. Press and hold to record a voice message.')}
-                  >
-                    <Text style={styles.recordButtonText}>
-                      {isRecording ? '●' : '🎤'}
-                    </Text>
-                  </View>
-                </GestureDetector>
+                {/* Tap to Record / Stop Button */}
+                <TouchableOpacity
+                  style={[
+                    styles.recordButton,
+                    isRecording ? styles.recordButtonActive : styles.recordButtonReady,
+                  ]}
+                  onPress={toggleRecording}
+                  disabled={loading}
+                  activeOpacity={0.7}
+                  accessible={true}
+                  focusable={true}
+                  accessibilityRole="button"
+                  accessibilityLabel={
+                    isRecording
+                      ? 'Stop recording button'
+                      : 'Voice record button'
+                  }
+                  accessibilityHint={
+                    isRecording
+                      ? 'Tap to stop recording and send'
+                      : 'Tap to start recording a voice message'
+                  }
+                  onFocus={() => speakOnFocus(isRecording
+                    ? 'Stop button. Tap to stop recording and send.'
+                    : 'Voice record button. Tap to start recording a voice message.')}
+                >
+                  <Text style={styles.recordButtonText}>
+                    {isRecording ? '■ STOP' : '🎤'}
+                  </Text>
+                </TouchableOpacity>
 
                 {/* Send Button */}
                 <TouchableOpacity
@@ -1164,7 +1169,6 @@ const styles = StyleSheet.create({
   recordButton: {
     width: 46,
     height: 42,
-    backgroundColor: 'rgba(255,107,107,0.15)',
     borderRadius: 21,
     justifyContent: 'center',
     alignItems: 'center',
@@ -1174,6 +1178,9 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255,60,60,0.4)',
     borderWidth: 2,
     borderColor: '#FF4444',
+  },
+  recordButtonReady: {
+    backgroundColor: 'rgba(255,107,107,0.15)',
   },
   recordButtonText: {
     fontSize: 18,
