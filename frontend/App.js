@@ -120,7 +120,7 @@ function MainTabs() {
         options={{
           tabBarLabel: 'Home',
           tabBarIcon: ({ color }) => (
-            <Text style={{ fontSize: 22, color }}>{'\u{1F3E0}'}</Text>
+            <Text style={{ fontSize: 15, color }}>{'\u{1F3E0}'}</Text>
           ),
         }}
       />
@@ -130,7 +130,7 @@ function MainTabs() {
         options={{
           tabBarLabel: 'Chat',
           tabBarIcon: ({ color }) => (
-            <Text style={{ fontSize: 22, color }}>{'\u{1F4AC}'}</Text>
+            <Text style={{ fontSize: 15, color }}>{'\u{1F4AC}'}</Text>
           ),
         }}
       />
@@ -140,7 +140,7 @@ function MainTabs() {
         options={{
           tabBarLabel: 'Memories',
           tabBarIcon: ({ color }) => (
-            <Text style={{ fontSize: 22, color }}>{'\u{1F4F7}'}</Text>
+            <Text style={{ fontSize: 15, color }}>{'\u{1F4F7}'}</Text>
           ),
         }}
       />
