@@ -1,61 +1,120 @@
 """
 audio.py - Speech-to-text processing.
-Converts audio recordings to text using Whisper via OpenAI-compatible API.
+Uses Groq Cloud Whisper API (free, fast, no local model needed).
 Shared by both in-app chat and hardware chat modules.
 """
 
 import os
 import base64
 import tempfile
-from openai import AsyncOpenAI
+import httpx
 
-# Using a STT service - you can swap this out for Whisper, Deepgram, etc.
-# Defaulting to z.ai which supports audio transcription
-stt_client = AsyncOpenAI(
-    api_key=os.getenv("GLM_API_KEY"),
-    base_url="https://api.z.ai/v4"
-)
+# Groq Whisper API config (free tier: 20 req/min, no card required)
+_GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+_GROQ_URL = "https://api.groq.com/openai/v1/audio/transcriptions"
+_WHISPER_MODEL = "whisper-large-v3"
 
 
-async def transcribe_audio(audio_bytes: bytes, mime_type: str = "webm/opus") -> str:
+async def transcribe_audio_base64(audio_b64: str) -> str:
     """
-    Transcribe audio bytes to text.
-    
+    Transcribe base64-encoded audio using Groq's cloud Whisper API.
+    No local ML libraries needed — runs entirely in the cloud.
+
     Args:
-        audio_bytes: Raw audio recording bytes
-        mime_type: MIME type of the audio format
-        
+        audio_b64: Base64-encoded audio string (WAV from frontend conversion)
+
     Returns:
-        Transcribed text string
+        Transcribed text string, or empty string on failure
     """
-    # Write audio to temp file for API submission
-    suffix = ".webm" if "webm" in mime_type else (".m4a" if "mp4" in mime_type else ".wav")
-    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
-        tmp.write(audio_bytes)
-        tmp_path = tmp.name
+    if not _GROQ_API_KEY:
+        print("[Audio] ERROR: GROQ_API_KEY not set in .env")
+        return ""
 
     try:
-        with open(tmp_path, "rb") as f:
-            # Try OpenAI-style transcription API
-            import aiofiles
-            response = await stt_client.audio.transcriptions.create(
-                model="whisper-1",
-                file=f,
-                language="en",
-            )
-            return response.text
+        # Decode base64 to bytes
+        audio_bytes = base64.b64decode(audio_b64)
+        
+        # Detailed logging for debugging
+        print(f"\n{'='*60}")
+        print(f"[Audio] === NEW TRANSCRIPTION REQUEST ===")
+        print(f"[Audio] Raw base64 string length: {len(audio_b64)} chars")
+        print(f"[Audio] Decoded audio bytes: {len(audio_bytes)} bytes")
+        print(f"[Audio] Audio format detection: {_detect_audio_format(audio_bytes)}")
+        print(f"[Audio] First 16 bytes (hex): {audio_bytes[:16].hex()}")
+        if len(audio_bytes) > 44:
+            # WAV header: bytes 22-23 = num channels, 24-27 = sample rate, 34-35 = bits per sample
+            import struct
+            channels = struct.unpack('<H', audio_bytes[22:24])[0] if len(audio_bytes) >= 24 else '?'
+            sample_rate = struct.unpack('<I', audio_bytes[28:32])[0] if len(audio_bytes) >= 32 else '?'
+            bits = struct.unpack('<H', audio_bytes[34:36])[0] if len(audio_bytes) >= 36 else '?'
+            print(f"[Audio] WAV info: channels={channels}, sample_rate={sample_rate}, bit_depth={bits}")
+        print(f"{'='*60}\n")
+
+        # Write to temp file (API expects multipart file upload)
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+            tmp.write(audio_bytes)
+            tmp_path = tmp.name
+
+        try:
+            # Open file handle for upload, ensure it's closed before cleanup
+            file_handle = open(tmp_path, "rb")
+            
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.post(
+                    _GROQ_URL,
+                    headers={"Authorization": f"Bearer {_GROQ_API_KEY}"},
+                    files={
+                        "file": ("audio.wav", file_handle, "audio/wav"),
+                    },
+                    data={
+                        "model": _WHISPER_MODEL,
+                        "language": "en",
+                        "response_format": "json",
+                    },
+                )
+            
+            # Explicitly close file handle BEFORE os.unlink
+            file_handle.close()
+
+            if response.status_code == 200:
+                result = response.json()
+                text = result.get("text", "").strip()
+                if text:
+                    print(f"[Audio] Transcribed ({len(text)} chars): {text[:100]}")
+                    return text
+                else:
+                    print("[Audio] Empty transcription returned")
+                    return ""
+            else:
+                print(f"[Audio] Groq API error {response.status_code}: {response.text[:200]}")
+                return ""
+
+        finally:
+            os.unlink(tmp_path)
+
     except Exception as e:
         print(f"[Audio] Transcription error: {e}")
-        # Fallback: return empty string, let chatbot handle it
         return ""
-    finally:
-        import os as _os
-        _os.unlink(tmp_path)
 
 
-async def transcribe_audio_base64(audio_b64: str, mime_type: str = "webm/opus") -> str:
-    """
-    Convenience function that accepts base64-encoded audio (how React Native sends it).
-    """
-    audio_bytes = base64.b64decode(audio_b64)
-    return await transcribe_audio(audio_bytes, mime_type)
+def _detect_audio_format(audio_bytes: bytes) -> str:
+    """Detect audio format from file header magic bytes."""
+    if len(audio_bytes) < 4:
+        return "wav"
+    # WebM/EBML: 0x1A 0x45 0xDF 0xA3
+    if audio_bytes[:4] == b'\x1a\x45\xdf\xa3':
+        return "webm"
+    # Ogg: 'OggS'
+    if audio_bytes[:4] == b'OggS':
+        return "ogg"
+    # MP4/M4A: ftyp box
+    if audio_bytes[4:8] == b'ftyp':
+        return "m4a"
+    # WAV: RIFF
+    if audio_bytes[:4] == b'RIFF':
+        return "wav"
+    # FLAC: fLaC
+    if audio_bytes[:4] == b'fLaC':
+        return "flac"
+    # Default fallback
+    return "wav"

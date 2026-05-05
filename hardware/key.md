@@ -1,0 +1,2 @@
+token="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"
+gemini="AIzaSyD6VG2y6pp7M1Eu1OEc013uoWYhBUMr67w"

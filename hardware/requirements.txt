@@ -1,0 +1,27 @@
+# EyeDentify Hardware Client - Raspberry Pi Dependencies
+# Install: pip install -r requirements.txt
+
+# HTTP client (backend API calls)
+requests>=2.31.0
+
+# Audio recording
+sounddevice>=0.4.6
+numpy>=1.26.0
+
+# Camera
+picamera2>=0.3.17          # Pi Camera Module 2/3 (libcamera)
+opencv-python-headless>=4.8.0  # USB camera / fallback
+
+# TTS (local on Pi)
+pyttsx3>=2.90              # Local text-to-speech
+
+# Button input
+bleak>=0.21.0              # Bluetooth Low Energy button (Flic, etc.)
+gpiozero>=2.0.0            # GPIO wired button (simpler API)
+pynput>=1.7.6              # USB/HID keyboard button mode
+
+# Config
+python-dotenv>=1.0.0
+
+# Audio pause (for gpiozero blocking)
+pause>=0.5                 # or use `pip install pause`
