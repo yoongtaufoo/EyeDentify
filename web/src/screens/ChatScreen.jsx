@@ -885,7 +885,7 @@ const ChatScreen = ({ user, onLogout }) => {
             disabled={isLoading}
             aria-label="Type your message"
             tabIndex={0}
-            onFocus={() => speak('Message input field. Type your question here, then press Enter or Tab to Send button.')}
+            onFocus={() => speak('Message input. Type your question here, then press Enter or Tab to Send button.')}
           />
           <div style={S.actionBtns}>
             <button
