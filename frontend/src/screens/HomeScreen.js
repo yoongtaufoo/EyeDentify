@@ -15,7 +15,7 @@ import {
   Dimensions,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { GestureDetector, Gesture } from 'react-native-gesture-handler';
+import { GestureDetector, Gesture, Directions } from 'react-native-gesture-handler';
 import * as Haptics from 'expo-haptics';
 import { useAuth } from '../contexts/AuthContext';
 import { getChatHistory } from '../services/apiService';
@@ -70,6 +70,35 @@ export default function HomeScreen({ navigation }) {
     loadRecent();
   }, [user]);
 
+  // Speak welcome whenever the user enters or returns to the Home tab
+  useEffect(() => {
+    const playHomeGreeting = () => {
+      const hour = new Date().getHours();
+      let timeGreeting = 'Good evening';
+      if (hour < 12) timeGreeting = 'Good morning';
+      else if (hour < 17) timeGreeting = 'Good afternoon';
+      
+      const name = user?.user_metadata?.full_name || user?.name || 'Friend';
+      
+      // Interrupt any lingering text-to-speech cleanly
+      // before announcing the dashboard entry point
+      Speech.stop();
+      Speech.speak(`${timeGreeting}, ${name}. Welcome back to EyeDentify.`, { rate: 0.9 });
+    };
+
+    // 1. Run immediately if the screen mounts and the user data is available
+    if (user) {
+      playHomeGreeting();
+    }
+
+    // 2. Run whenever the user clicks back onto the Home tab from Chat or Memories
+    const unsubscribe = navigation.addListener('focus', () => {
+      playHomeGreeting();
+    });
+
+    return unsubscribe;
+  }, [navigation, user]);
+
   // Simulate hardware status check
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -100,6 +129,19 @@ export default function HomeScreen({ navigation }) {
       handleLogout();
     })
     .runOnJS(true);
+
+  // Swipe left → Go to Chat tab
+  const swipeLeft = Gesture.Fling()
+    .direction(Directions.LEFT)
+    .onEnd(() => {
+      navigation.navigate('Chat');
+    })
+    .runOnJS(true);
+
+  // Combine gestures
+  const combinedGesture = Gesture.Exclusive(
+    Gesture.Simultaneous(twoFingerDoubleTap, swipeLeft)
+  );
 
   // Speak welcome on mount
   useEffect(() => {
@@ -146,7 +188,7 @@ export default function HomeScreen({ navigation }) {
   ];
 
   return (
-    <GestureDetector gesture={twoFingerDoubleTap}>
+    <GestureDetector gesture={combinedGesture}>
     <SafeAreaView style={styles.screen} edges={['top']}>
       {/* Header */}
       <View style={styles.header}>

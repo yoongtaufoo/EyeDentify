@@ -15,7 +15,7 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { GestureDetector, Gesture } from 'react-native-gesture-handler';
+import { GestureDetector, Gesture, Directions } from 'react-native-gesture-handler';
 import * as Haptics from 'expo-haptics';
 import { useAuth } from '../contexts/AuthContext';
 import { getChatHistory } from '../services/apiService';
@@ -39,7 +39,7 @@ function formatDateTime(ts) {
   return { date, time };
 }
 
-export default function MemoriesScreen() {
+export default function MemoriesScreen({ navigation }) {
   const { user, signOut } = useAuth();
   const [memories, setMemories] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -119,6 +119,22 @@ export default function MemoriesScreen() {
     .onEnd(() => { handleLogout(); })
     .runOnJS(true);
 
+  // Swipe right → Go to Chat tab
+  const swipeRight = Gesture.Fling()
+    .direction(Directions.RIGHT)
+    .onEnd(() => {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      navigation.navigate('Chat');
+      Speech.speak('Switching to Chat.');
+    })
+    .runOnJS(true);
+
+  // Combine gestures
+  const combinedGesture = Gesture.Exclusive(
+    twoFingerDoubleTap,
+    swipeRight,
+  );
+
   const renderMemoryCard = ({ item, index }) => {
     const { date, time } = formatDateTime(item.created_at);
     return (
@@ -174,7 +190,7 @@ export default function MemoriesScreen() {
 
   if (loading) {
     return (
-      <GestureDetector gesture={twoFingerDoubleTap}>
+      <GestureDetector gesture={combinedGesture}>
       <SafeAreaView style={styles.screen} edges={['top']}>
         {/* Header */}
         <View style={styles.header}>
@@ -193,7 +209,7 @@ export default function MemoriesScreen() {
   }
 
   return (
-    <GestureDetector gesture={twoFingerDoubleTap}>
+    <GestureDetector gesture={combinedGesture}>
     <SafeAreaView style={styles.screen} edges={['top']}>
       {/* Header */}
       <View style={styles.header}>

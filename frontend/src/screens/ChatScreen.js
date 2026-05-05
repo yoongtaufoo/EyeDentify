@@ -95,6 +95,8 @@ export default function ChatScreen({ navigation }) {
   const [playbackUri, setPlaybackUri] = useState(null);
   const player = useAudioPlayer(playbackUri);
   const flatListRef = useRef(null);
+  const greetingTimeoutRef = useRef(null);
+  const hasPlayedGesturesRef = useRef(false);
 
   /** Replay audio on every press — seek to start then play */
   const handlePlayVoice = (uri) => {
@@ -115,28 +117,173 @@ export default function ChatScreen({ navigation }) {
   }, [user]);
 
   // Welcome + gesture guide once when chat view is first shown
+  // useEffect(() => {
+  //   if (!hasWelcomed && userFullName && viewMode === VIEW.CHAT) {
+  //     setHasWelcomed(true);
+  //     const greeting = `Welcome back, ${userFullName}. EyeDentify ready.`;
+  //     const gestures =
+  //       'Gesture guide. Tap the left side of screen to open or close camera. ' +
+  //       'Swipe left to go to Memories. Swipe right to go to Home. ' +
+  //       'Hold the microphone button to record and send a voice message. ' +
+  //       'Two-finger double-tap anywhere to log out.';
+  //     Speech.speak(greeting, { rate: 0.9 });
+  //     setTimeout(() => Speech.speak(gestures, { rate: 0.85 }), 2000);
+  //   }
+  // }, [hasWelcomed, userFullName, viewMode]);
+
+  // useEffect(() => {
+  //   if (!hasWelcomed && userFullName && viewMode === VIEW.CHAT) {
+  //     setHasWelcomed(true);
+  //     const greeting = `Welcome back, ${userFullName}. EyeDentify ready.`;
+  //     const gestures =
+  //       'Gesture guide. Tap the left side of screen to open or close camera. ' +
+  //       'Swipe left to go to Memories. Swipe right to go to Home. ' +
+  //       'Hold the microphone button to record and send a voice message. ' +
+  //       'Two-finger double-tap anywhere to log out.';
+      
+  //     Speech.stop(); // Stop any lingering speech
+  //     Speech.speak(greeting, { rate: 0.9 });
+      
+  //     // Capture the timeout ID into the ref
+  //     greetingTimeoutRef.current = setTimeout(() => {
+  //       Speech.speak(gestures, { rate: 0.85 });
+  //     }, 2000);
+  //   }
+
+  //   // Clear timeout if the component unmounts unexpectedly
+  //   return () => {
+  //     if (greetingTimeoutRef.current) clearTimeout(greetingTimeoutRef.current);
+  //   };
+  // }, [hasWelcomed, userFullName, viewMode]);
+
+  // useEffect(() => {
+  //   const playIntroSpeech = () => {
+  //     // Ensure we are explicitly in the chat view and have the profile loaded
+  //     if (userFullName && viewMode === VIEW.CHAT) {
+  //       const greeting = `Welcome back, ${userFullName}. EyeDentify ready.`;
+  //       const gestures =
+  //         'Gesture guide. Tap the left side of screen to open or close camera. ' +
+  //         'Swipe left to go to Memories. Swipe right to go to Home. ' +
+  //         'Hold the microphone button to record and send a voice message. ' +
+  //         'Two-finger double-tap anywhere to log out.';
+        
+  //       // Stop any current screen reading cleanly
+  //       Speech.stop(); 
+  //       Speech.speak(greeting, { rate: 0.9 });
+        
+  //       // Reset any existing text-to-speech timer before creating a new one
+  //       if (greetingTimeoutRef.current) {
+  //         clearTimeout(greetingTimeoutRef.current);
+  //       }
+        
+  //       // Schedule the gesture rundown
+  //       greetingTimeoutRef.current = setTimeout(() => {
+  //         Speech.speak(gestures, { rate: 0.85 });
+  //       }, 2000);
+  //     }
+  //   };
+
+  //   // 1. Trigger speech immediately if the viewMode state toggles back to CHAT (e.g., closing camera)
+  //   if (viewMode === VIEW.CHAT) {
+  //     playIntroSpeech();
+  //   }
+
+  //   // 2. Trigger speech whenever the user clicks this tab from Home or Memories
+  //   const unsubscribe = navigation.addListener('focus', () => {
+  //     playIntroSpeech();
+  //   });
+
+  //   // Clean up timers and listeners when navigating away
+  //   return () => {
+  //     unsubscribe();
+  //     if (greetingTimeoutRef.current) {
+  //       clearTimeout(greetingTimeoutRef.current);
+  //     }
+  //   };
+  // }, [navigation, userFullName, viewMode]);
+
   useEffect(() => {
-    if (!hasWelcomed && userFullName && viewMode === VIEW.CHAT) {
-      setHasWelcomed(true);
-      const greeting = `Welcome back, ${userFullName}. EyeDentify ready.`;
-      const gestures =
-        'Gesture guide. Tap the left side of screen to open or close camera. ' +
-        'Swipe left to go to Memories. Swipe right to go to Home. ' +
-        'Hold the microphone button to record and send a voice message. ' +
-        'Two-finger double-tap anywhere to log out.';
-      Speech.speak(greeting, { rate: 0.9 });
-      setTimeout(() => Speech.speak(gestures, { rate: 0.85 }), 2000);
+    const playIntroSpeech = () => {
+      if (userFullName && viewMode === VIEW.CHAT) {
+        // Clear any lingering or racing gesture timers immediately
+        if (greetingTimeoutRef.current) {
+          clearTimeout(greetingTimeoutRef.current);
+          greetingTimeoutRef.current = null;
+        }
+
+        // Wipe the slate clean before talking
+        Speech.stop(); 
+
+        if (!hasPlayedGesturesRef.current) {
+          // SCENARIO A: The very first load. Play full greeting + schedule gestures.
+          const greeting = `Welcome back, ${userFullName}. EyeDentify ready.`;
+          const gestures =
+            'Gesture guide. Tap the left side of screen to open or close camera. ' +
+            'Swipe left to go to Memories. Swipe right to go to Home. ' +
+            'Hold the microphone button to record and send a voice message. ' +
+            'Two-finger double-tap anywhere to log out.';
+          
+          Speech.speak(greeting, { rate: 0.9 });
+          
+          greetingTimeoutRef.current = setTimeout(() => {
+            Speech.speak(gestures, { rate: 0.85 });
+            hasPlayedGesturesRef.current = true; // Mark as played ONLY after it actually triggers
+          }, 2000);
+
+        } else {
+          // SCENARIO B: Returning user switching tabs. Just a fast notification.
+          Speech.speak('Chat active.', { rate: 0.95 });
+        }
+      }
+    };
+
+    // 1. Check instantly if view mode flips back from camera
+    if (viewMode === VIEW.CHAT) {
+      playIntroSpeech();
     }
-  }, [hasWelcomed, userFullName, viewMode]);
+
+    // 2. Listen for navigation tab selections
+    const unsubscribe = navigation.addListener('focus', () => {
+      playIntroSpeech();
+    });
+
+    return () => {
+      unsubscribe();
+      if (greetingTimeoutRef.current) {
+        clearTimeout(greetingTimeoutRef.current);
+      }
+    };
+  }, [navigation, userFullName, viewMode]);
 
   // Auto-scroll to bottom on new messages
+  // Guaranteed auto-scroll on fresh data loading AND tab switching
   useEffect(() => {
-    if (messages.length > 0 && flatListRef.current) {
-      setTimeout(() => {
-        flatListRef.current.scrollToEnd({ animated: true });
-      }, 150);
-    }
-  }, [messages]);
+    // Function to execute the scroll safely
+    const scrollToBottom = () => {
+      if (messages.length > 0 && flatListRef.current) {
+        setTimeout(() => {
+          flatListRef.current?.scrollToEnd({ animated: false }); // 'false' makes it snap instantly without an ugly sliding delay on load
+        }, 250); // 250ms gives React Native enough time to compute the full list layout height
+      }
+    };
+
+    // 1. Run it immediately if messages just loaded or changed
+    scrollToBottom();
+
+    // 2. Run it whenever the user clicks or navigates back onto the Chat Tab
+    const unsubscribe = navigation.addListener('focus', () => {
+      scrollToBottom();
+    });
+
+    return unsubscribe; // Clean up listener on unmount
+  }, [navigation, messages]);
+  // useEffect(() => {
+  //   if (messages.length > 0 && flatListRef.current) {
+  //     setTimeout(() => {
+  //       flatListRef.current.scrollToEnd({ animated: true });
+  //     }, 150);
+  //   }
+  // }, [messages]);
 
   // ============================================================
   // DATA LOADING
@@ -266,12 +413,80 @@ export default function ChatScreen({ navigation }) {
   // AUDIO RECORDING
   // ============================================================
   const toggleRecording = async () => {
+    // 1. KILL THE PENDING GESTURE GUIDE TIMER IMMEDIATELY
+    if (greetingTimeoutRef.current) {
+      clearTimeout(greetingTimeoutRef.current);
+      greetingTimeoutRef.current = null;
+    }
+
+    // 2. STOP THE EXPO SPEECH ENGINE INSTANTLY
+    Speech.stop();
+
+    // 3. Proceed with standard recording toggle logic
     if (isRecording) {
       await stopRecordingAndSend();
     } else {
       await startRecording();
     }
   };
+  // const toggleRecording = async () => {
+  //   if (isRecording) {
+  //     await stopRecordingAndSend();
+  //   } else {
+  //     await startRecording();
+  //   }
+  // };
+
+  // const toggleVoiceMessage = async () => {
+  //   // 1. KILL THE PENDING GESTURE GUIDE TIMER IMMEDIATELY
+  //   if (greetingTimeoutRef.current) {
+  //     clearTimeout(greetingTimeoutRef.current);
+  //     greetingTimeoutRef.current = null;
+  //   }
+
+  //   // 2. STOP THE EXPO SPEECH ENGINE INSTANTLY
+  //   Speech.stop();
+
+  //   // 3. Stop local web speech fallback (if applicable)
+  //   if ('speechSynthesis' in window) {
+  //     window.speechSynthesis.cancel();
+  //   }
+
+  //   // 4. Stop high-quality backend audio stream
+  //   if (activeBackendAudioRef.current) {
+  //     activeBackendAudioRef.current.pause();
+  //     activeBackendAudioRef.current = null;
+  //   }
+
+  //   if (isVoiceRecording) {
+  //     try {
+  //       setIsVoiceRecording(false);
+  //       window.isRecordingVoice = false; 
+        
+  //       const text = await stopRecording(requireUid());
+  //       if (text && text.trim()) {
+  //         setInputText(text.trim());
+  //         sendMessage(text.trim());
+  //       }
+  //     } catch (err) {
+  //       console.error('[Chat] Voice error:', err);
+  //       setIsVoiceRecording(false);
+  //       window.isRecordingVoice = false;
+  //     }
+  //   } else {
+  //     try {
+  //       if (!isSpeechSupported()) return;
+        
+  //       window.isRecordingVoice = true; 
+  //       setIsVoiceRecording(true);
+        
+  //       await startRecording();
+  //     } catch {
+  //       setIsVoiceRecording(false);
+  //       window.isRecordingVoice = false;
+  //     }
+  //   }
+  // };
 
   const startRecording = async () => {
     try {
@@ -411,17 +626,54 @@ export default function ChatScreen({ navigation }) {
   const handleLogout = async () => {
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     Speech.speak('Logging out.');
+    
+    hasPlayedGesturesRef.current = false; // <-- Reset the safety lock here!
+    
     try {
       if (signOut) await signOut();
     } catch (e) {
       console.error('Logout error:', e);
     }
   };
+  // const handleLogout = async () => {
+  //   Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+  //   Speech.speak('Logging out.');
+  //   try {
+  //     if (signOut) await signOut();
+  //   } catch (e) {
+  //     console.error('Logout error:', e);
+  //   }
+  // };
 
   // ============================================================
   // NAVIGATION HELPERS
   // ============================================================
+  // const goToCamera = () => {
+  //   Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+  //   setViewMode(VIEW.CAMERA);
+  //   Speech.speak('Camera view. Double-tap to take a picture. Tap left side to close.');
+  // };
+
   const goToCamera = () => {
+    // 1. Kill the pending welcome/gesture guide timer immediately
+    if (greetingTimeoutRef.current) {
+      clearTimeout(greetingTimeoutRef.current);
+      greetingTimeoutRef.current = null;
+    }
+
+    // 2. Stop the Expo Speech engine instantly
+    Speech.stop();
+
+    // 3. Pause the audio player if a recorded voice message is playing
+    try {
+      if (player && player.playing) {
+        player.pause();
+      }
+    } catch (err) {
+      console.warn('[Camera] Failed to pause audio player:', err);
+    }
+
+    // 4. Switch view and announce camera instructions
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     setViewMode(VIEW.CAMERA);
     Speech.speak('Camera view. Double-tap to take a picture. Tap left side to close.');
@@ -558,6 +810,92 @@ export default function ChatScreen({ navigation }) {
     );
   }
 
+  // // ============================================================
+  // // RENDER: CHAT HISTORY ITEM
+  // // ============================================================
+  // const renderMessageItem = ({ item }) => {
+  //   const isUser = item.role === 'user';
+
+  //   if (item.isProcessingPlaceholder) {
+  //     return (
+  //       <View style={[styles.messageBubble, styles.processingBubble]}>
+  //         <ActivityIndicator size="small" color="#F5A623" />
+  //         <Text style={styles.processingText}>{item.content}</Text>
+  //       </View>
+  //     );
+  //   }
+
+  //   return (
+  //     <View
+  //       style={[
+  //         styles.messageBubble,
+  //         isUser ? styles.userBubble : styles.assistantBubble,
+  //       ]}
+  //       accessible={true}
+  //       accessibilityLabel={`${isUser ? 'You' : 'EyeDentify'}: ${item.content}`}
+  //       accessibilityRole="text" 
+  //     >
+  //       {/* Show captured image thumbnail for user image captures */}
+  //       {item.imageUri && (
+  //         <Image
+  //           source={{ uri: item.imageUri }}
+  //           style={styles.capturedImageThumbnail}
+  //           accessible={true}
+  //           accessibilityLabel="Captured image"
+  //         />
+  //       )}
+  //       <Text
+  //         style={[
+  //           styles.messageText,
+  //           isUser ? styles.userText : styles.assistantText,
+  //         ]}
+  //       >
+  //         {item.content}
+  //       </Text>
+
+  //       {/* Show detected transcription text above Play Voice button */}
+  //       {item.transcribedText && (
+  //         <View style={styles.transcribedTextContainer}>
+  //           <Text style={styles.transcribedTextLabel}>Detected:</Text>
+  //           <Text style={styles.transcribedTextValue}>{item.transcribedText}</Text>
+  //         </View>
+  //       )}
+
+  //       {/* Voice playback button */}
+  //       {item.audioUri && (
+  //         <TouchableOpacity
+  //           style={styles.voicePlayButton}
+  //           onPress={() => handlePlayVoice(item.audioUri)}
+  //           accessible={true}
+  //           focusable={true}
+  //           accessibilityRole="button"
+  //           accessibilityLabel="Play voice message"
+  //           accessibilityHint="Double tap to listen to the voice message"
+  //           onFocus={() => speakOnFocus('Play voice message button. Tap to listen to the voice message.')}
+  //         >
+  //           <Text style={styles.voicePlayText}>▶︎ Play voice</Text>
+  //         </TouchableOpacity>
+  //       )}
+
+  //       {/* Show detected objects if present */}
+  //       {item.objects && item.objects.length > 0 && (
+  //         <Text style={styles.objectsText}>
+  //           Objects detected: {item.objects.map((o) => o.label || o).join(', ')}
+  //         </Text>
+  //       )}
+
+  //       <Text style={styles.timestamp}>
+  //         {item.timestamp
+  //           ? new Date(item.timestamp).toLocaleTimeString([], {
+  //               hour: '2-digit',
+  //               minute: '2-digit',
+  //             })
+  //           : ''}
+  //       </Text>
+  //     </View>
+  //   );
+  // };
+
   // ============================================================
   // RENDER: CHAT HISTORY ITEM
   // ============================================================
@@ -574,14 +912,21 @@ export default function ChatScreen({ navigation }) {
     }
 
     return (
-      <View
+      <TouchableOpacity
         style={[
           styles.messageBubble,
           isUser ? styles.userBubble : styles.assistantBubble,
         ]}
+        activeOpacity={0.7}
+        onPress={() => {
+          // Instantly stop any ongoing speech and announce the bubble text
+          Speech.stop();
+          Speech.speak(item.content, { rate: 0.88 });
+        }}
         accessible={true}
-        accessibilityLabel={`${isUser ? 'You' : 'EyeDentify'}: ${item.content}`}
-        accessibilityRole="text" 
+        accessibilityLabel={`${isUser ? 'You said' : 'EyeDentify replied'}: ${item.content}`}
+        accessibilityRole="button" // Changed from "text" to "button" to flag it as interactable
+        accessibilityHint="Double tap to hear this message spoken aloud"
       >
         {/* Show captured image thumbnail for user image captures */}
         {item.imageUri && (
@@ -640,7 +985,7 @@ export default function ChatScreen({ navigation }) {
               })
             : ''}
         </Text>
-      </View>
+      </TouchableOpacity>
     );
   };
 
@@ -1267,7 +1612,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   cameraBottomHint: {
-    paddingBottom: 50,
+    paddingBottom: 100,
     alignItems: 'center',
   },
   swipeBackText: {
