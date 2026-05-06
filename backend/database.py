@@ -297,7 +297,7 @@ def save_chat_message(
 #     # Return in chronological order (oldest first for display)
 #     return list(reversed(response.data or []))
 
-def get_chat_history(user_id: str, limit: int = 50) -> list:
+def get_chat_history(user_id: str, limit: int = 1000) -> list:
     """Fix: Handle empty history safely to prevent JSON Parse Error."""
     try:
         print(f"DEBUG: Fetching history for UUID: {user_id}")

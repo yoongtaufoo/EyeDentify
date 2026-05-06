@@ -458,6 +458,26 @@ const ChatScreen = ({ user, onLogout }) => {
     return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   };
 
+  const getDateKey = (ts) => {
+    const d = new Date(ts);
+    return d.toISOString().split('T')[0]; // YYYY-MM-DD
+  };
+
+  const formatDateSeparator = (ts) => {
+    const d = new Date(ts);
+    const now = new Date();
+    const yesterday = new Date(now);
+    yesterday.setDate(yesterday.getDate() - 1);
+    
+    const dStr = d.toISOString().split('T')[0];
+    const nowStr = now.toISOString().split('T')[0];
+    const yesterdayStr = yesterday.toISOString().split('T')[0];
+    
+    if (dStr === nowStr) return 'Today';
+    if (dStr === yesterdayStr) return 'Yesterday';
+    return d.toLocaleDateString([], { month: 'short', day: 'numeric', year: d.getFullYear() !== now.getFullYear() ? 'numeric' : undefined });
+  };
+
   // ── STYLES (Light theme matching reference images) ──
   const S = {
     screen: {
@@ -731,6 +751,26 @@ const ChatScreen = ({ user, onLogout }) => {
       padding: '10px 14px', borderRadius: 12, fontSize: 13, margin: '8px 16px', textAlign: 'center',
     },
 
+    dateSeparator: {
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      margin: '16px 0 12px',
+      gap: 12,
+    },
+    dateSeparatorLine: {
+      flex: 1,
+      height: '1px',
+      backgroundColor: '#E0E0E0',
+    },
+    dateSeparatorText: {
+      fontSize: 12,
+      fontWeight: '600',
+      color: '#999',
+      textTransform: 'uppercase',
+      letterSpacing: 0.4,
+    },
+
     // closeModalBtn: {
     //   position: 'absolute', top: 14, right: 14, width: 36, height: 36, borderRadius: 50,
     //   background: 'rgba(0,0,0,0.5)', border: 'none', color: '#FFF', cursor: 'pointer',
@@ -818,46 +858,70 @@ const ChatScreen = ({ user, onLogout }) => {
             </p>
           </div>
         ) : (
-          messages.map((msg, i) => (
-            <div key={i} style={{ ...S.msgRow, ...(msg.role==='user'?S.msgRowUser:{}) }} role="article" tabIndex={0}
-              onFocus={() => {
-                const sender = msg.role === 'user' ? 'You said' : 'AI replied';
-                speak(`${sender}: ${msg.text}`);
-              }}
-            >
-              <div>
-                {/* Added onClick handler and cursor pointer here */}
-                <div 
-                  onClick={() => {
-                    const sender = msg.role === 'user' ? 'You said' : 'EyeDentify AI';
+          (() => {
+            const result = [];
+            let lastDateKey = null;
+
+            messages.forEach((msg, i) => {
+              const currentDateKey = getDateKey(msg.timestamp);
+
+              // Add date separator if date changed
+              if (currentDateKey !== lastDateKey) {
+                result.push(
+                  <div key={`date-${currentDateKey}`} style={S.dateSeparator} role="status">
+                    <div style={S.dateSeparatorLine}></div>
+                    <span style={S.dateSeparatorText}>{formatDateSeparator(msg.timestamp)}</span>
+                    <div style={S.dateSeparatorLine}></div>
+                  </div>
+                );
+                lastDateKey = currentDateKey;
+              }
+
+              // Add message
+              result.push(
+                <div key={i} style={{ ...S.msgRow, ...(msg.role==='user'?S.msgRowUser:{}) }} role="article" tabIndex={0}
+                  onFocus={() => {
+                    const sender = msg.role === 'user' ? 'You said' : 'AI replied';
                     speak(`${sender}: ${msg.text}`);
                   }}
-                  style={{
-                    ...S.bubble,
-                    ...(msg.role==='user' ? S.bubbleUser : (msg.isError ? S.bubbleError : S.bubbleBot)),
-                    cursor: 'pointer' 
-                  }}
                 >
-                  <span>{msg.text}</span>
-                  {msg.image && <img src={msg.image} alt="Captured" style={S.msgImg} />}
-                  {msg.imageUri && !msg.image && <img src={msg.imageUri} alt="Memory" style={S.msgImg} />}
-                  {msg.audioBase64 && (
-                    <div style={{ marginTop: 8 }}>
-                      <audio controls style={S.audioPlayer} ref={(el) => {
-                        if (el && msg.audioBase64) el.src = `data:audio/mp3;base64,${msg.audioBase64}`;
-                      }} />
+                  <div>
+                    {/* Added onClick handler and cursor pointer here */}
+                    <div 
+                      onClick={() => {
+                        const sender = msg.role === 'user' ? 'You said' : 'EyeDentify AI';
+                        speak(`${sender}: ${msg.text}`);
+                      }}
+                      style={{
+                        ...S.bubble,
+                        ...(msg.role==='user' ? S.bubbleUser : (msg.isError ? S.bubbleError : S.bubbleBot)),
+                        cursor: 'pointer' 
+                      }}
+                    >
+                      <span>{msg.text}</span>
+                      {msg.image && <img src={msg.image} alt="Captured" style={S.msgImg} />}
+                      {msg.imageUri && !msg.image && <img src={msg.imageUri} alt="Memory" style={S.msgImg} />}
+                      {msg.audioBase64 && (
+                        <div style={{ marginTop: 8 }}>
+                          <audio controls style={S.audioPlayer} ref={(el) => {
+                            if (el && msg.audioBase64) el.src = `data:audio/mp3;base64,${msg.audioBase64}`;
+                          }} />
+                        </div>
+                      )}
                     </div>
-                  )}
+                    <div style={{ ...S.msgMeta, ...(msg.role==='user'?{}:S.msgMetaBot) }}>
+                      <span style={{ ...S.msgSender, ...(msg.role==='user'?{}:S.msgSenderBot) }}>
+                        {msg.role === 'user' ? 'You' : 'EyeDentify AI'}
+                      </span>
+                      <span style={S.msgTime}>{formatTime(msg.timestamp)}</span>
+                    </div>
+                  </div>
                 </div>
-                <div style={{ ...S.msgMeta, ...(msg.role==='user'?{}:S.msgMetaBot) }}>
-                  <span style={{ ...S.msgSender, ...(msg.role==='user'?{}:S.msgSenderBot) }}>
-                    {msg.role === 'user' ? 'You' : 'EyeDentify AI'}
-                  </span>
-                  <span style={S.msgTime}>{formatTime(msg.timestamp)}</span>
-                </div>
-              </div>
-            </div>
-          ))
+              );
+            });
+
+            return result;
+          })()
         )}
 
         {/* Typing indicator */}

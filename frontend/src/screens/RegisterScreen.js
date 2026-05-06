@@ -892,21 +892,24 @@ const styles = StyleSheet.create({
   },
   audioStatusInner: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'center', // Vertically align text and spinner dead center
     justifyContent: 'center',
-    marginBottom: 10,
+    marginBottom: 14,
+    width: '100%',
+    gap: 10,
   },
   audioStatusText: {
     color: '#2E7D32',
     fontSize: 15,
     fontWeight: '600',
-    marginRight: 10,
+    flex: 1,
+    lineHeight: 20, // Prevents row layout squishing when moving to line 2
   },
   audioStatusDone: {
     color: '#2E7D32',
   },
   audioSpinner: {
-    marginLeft: 10,
+    marginTop: 2,
   },
   audioStopButton: {
     width: '100%',
@@ -1049,14 +1052,26 @@ const styles = StyleSheet.create({
   },
   audioEditableInput: {
     width: '100%',
-    height: 55,
-    backgroundColor: '#1A2A1A',
+    height: 52,
+    backgroundColor: '#F5F5F5', // Light grey matching textInput
     borderRadius: 12,
-    paddingHorizontal: 18,
-    color: '#4ADE80',
-    fontSize: 17,
+    paddingHorizontal: 16,
+    color: '#222', // Dark text color matching textInput
+    fontSize: 16,
     borderWidth: 1.5,
-    borderColor: '#4CAF50',
+    borderColor: '#4CAF50', // Clean green border outline highlighting audio source
     marginBottom: 10,
   },
+  // audioEditableInput: {
+  //   width: '100%',
+  //   height: 55,
+  //   backgroundColor: '#1A2A1A',
+  //   borderRadius: 12,
+  //   paddingHorizontal: 18,
+  //   color: '#4ADE80',
+  //   fontSize: 17,
+  //   borderWidth: 1.5,
+  //   borderColor: '#4CAF50',
+  //   marginBottom: 10,
+  // },
 });

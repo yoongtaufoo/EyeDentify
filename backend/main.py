@@ -371,7 +371,7 @@ async def chat_send(
 
 
 @app.get("/chat/history")
-async def chat_history(user_id: str, limit: int = 50):
+async def chat_history(user_id: str, limit: int = 9999):
     """Get chat history for a user, enriched with image URLs from memories."""
     from database import get_chat_history, get_memories_by_id_list
 
