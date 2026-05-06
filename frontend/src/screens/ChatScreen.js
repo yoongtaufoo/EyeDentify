@@ -97,6 +97,7 @@ export default function ChatScreen({ navigation }) {
   const flatListRef = useRef(null);
   const greetingTimeoutRef = useRef(null);
   const hasPlayedGesturesRef = useRef(false);
+  const loadingRef = useRef(loading);
 
   /** Replay audio on every press — seek to start then play */
   const handlePlayVoice = (uri) => {
@@ -110,11 +111,69 @@ export default function ChatScreen({ navigation }) {
   // ============================================================
   // ON MOUNT: Load history + welcome user
   // ============================================================
+  // useEffect(() => {
+  //   if (!user) return;
+  //   loadChatHistory();
+  //   fetchUserProfile();
+  // }, [user]);
+
+  // Synchronize mutable reference boundary to eliminate stale closures
+  useEffect(() => {
+    loadingRef.current = loading;
+  }, [loading]);
+
+  // Dynamic Tab Focus + Hardware Background Sync Engine
   useEffect(() => {
     if (!user) return;
-    loadChatHistory();
+    
+    // Fetch profile string parameters once on layout mount
     fetchUserProfile();
-  }, [user]);
+
+    const syncChatHistory = async () => {
+      // POLLING GUARD: Bypass server synchronization if an operations thread is active
+      if (loadingRef.current || isProcessingImage || isRecording) return;
+
+      try {
+        const history = await getChatHistory(user.id);
+        if (history && history.length > 0) {
+          const formatted = history.map((msg) => ({
+            id: msg.id || String(Math.random()),
+            role: msg.role,
+            content: msg.content,
+            timestamp: msg.created_at || undefined,
+            imageUri: msg.image_uri || null,
+            memoryId: msg.memory_id || null,
+          }));
+          
+          setMessages(prev => {
+            // Protect structural state if array lengths haven't changed
+            if (prev.length !== formatted.length) {
+              return formatted;
+            }
+            return prev;
+          });
+        }
+      } catch (err) {
+        console.error('[App Chat Sync] Database fetch error:', err);
+      }
+    };
+
+    // 1. Core synchronization checkpoints
+    syncChatHistory();
+
+    // 2. Re-fetch history every single time the user selects the Chat tab
+    const unsubscribeFocus = navigation.addListener('focus', () => {
+      syncChatHistory();
+    });
+
+    // 3. Catch background hardware camera uploads while screen stays active
+    const pollingTimer = setInterval(syncChatHistory, 4000);
+
+    return () => {
+      unsubscribeFocus();
+      clearInterval(pollingTimer);
+    };
+  }, [navigation, user]);
 
   // Welcome + gesture guide once when chat view is first shown
   // useEffect(() => {

@@ -76,6 +76,7 @@ const ChatScreen = ({ user, onLogout }) => {
   const [messages, setMessages] = useState([]);
   const [inputText, setInputText] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const isLoadingRef = useRef(isLoading);
   
   // Camera states
   const [showCameraModal, setShowCameraModal] = useState(false);
@@ -94,6 +95,10 @@ const ChatScreen = ({ user, onLogout }) => {
   const streamRef = useRef(null);
   const chatEndRef = useRef(null);
   const activeBackendAudioRef = useRef(null);
+
+  useEffect(() => {
+    isLoadingRef.current = isLoading;
+  }, [isLoading]);
 
   // Auto-scroll to bottom
   useEffect(() => {
@@ -120,17 +125,19 @@ const ChatScreen = ({ user, onLogout }) => {
   }, [capturedImage, showCameraModal]);
 
   // Load chat history
+  // Polling Sync Engine: Automatically updates history on focus and monitors hardware pipelines every 4s
   useEffect(() => {
     const loadHistory = async () => {
       if (!user) return;
       const userId = uid();
       if (!userId) return;
 
-      try {
-        console.log('[Chat] Loading history for:', userId);
-        const history = await getChatHistory(userId);
+      // POLLING GUARD: Stop background synchronization if a chat request is processing
+      if (isLoadingRef.current || processingAction || isVoiceRecording) return;
 
-        if (history.length > 0) {
+      try {
+        const history = await getChatHistory(userId);
+        if (history && history.length > 0) {
           const restored = history.map(msg => ({
             role: msg.role,
             text: msg.content,
@@ -138,14 +145,54 @@ const ChatScreen = ({ user, onLogout }) => {
             memoryId: msg.memory_id || null,
             imageUri: msg.image_uri || null,
           }));
-          setMessages(restored);
+          
+          // Only update state if message counts shift to avoid redundant page flashing
+          setMessages(prev => {
+            if (prev.length !== restored.length) {
+              return restored;
+            }
+            return prev;
+          });
         }
       } catch (err) {
-        console.error('[Chat] Failed to load history:', err);
+        console.error('[Web Chat Sync] Background sync failed:', err);
       }
     };
+
+    // Run immediately on dashboard load
     loadHistory();
+
+    // Establish persistent background synchronization interval
+    const syncInterval = setInterval(loadHistory, 4000);
+
+    return () => clearInterval(syncInterval);
   }, [user]);
+  // useEffect(() => {
+  //   const loadHistory = async () => {
+  //     if (!user) return;
+  //     const userId = uid();
+  //     if (!userId) return;
+
+  //     try {
+  //       console.log('[Chat] Loading history for:', userId);
+  //       const history = await getChatHistory(userId);
+
+  //       if (history.length > 0) {
+  //         const restored = history.map(msg => ({
+  //           role: msg.role,
+  //           text: msg.content,
+  //           timestamp: new Date(msg.created_at).getTime() || Date.now(),
+  //           memoryId: msg.memory_id || null,
+  //           imageUri: msg.image_uri || null,
+  //         }));
+  //         setMessages(restored);
+  //       }
+  //     } catch (err) {
+  //       console.error('[Chat] Failed to load history:', err);
+  //     }
+  //   };
+  //   loadHistory();
+  // }, [user]);
 
   // Camera functions
   const startCamera = async () => {
