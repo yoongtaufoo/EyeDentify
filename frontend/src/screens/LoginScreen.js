@@ -792,21 +792,23 @@ const styles = StyleSheet.create({
   },
   audioStatusInner: {
     flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
+    alignItems: 'flex-start',
+    justifyContent: 'flex-start',
     marginBottom: 10,
+    gap: 12,
   },
   audioStatusText: {
     color: '#2E7D32',
     fontSize: 15,
     fontWeight: '600',
-    marginRight: 10,
+    flex: 1,
+    flexWrap: 'wrap',
   },
   audioStatusDone: {
     color: '#2E7D32',
   },
   audioSpinner: {
-    marginLeft: 10,
+    marginTop: 2,
   },
   audioStopButton: {
     width: '100%',
@@ -915,6 +917,7 @@ const styles = StyleSheet.create({
   // Audio mode - editable input after transcription
   audioEditContainer: {
     width: '100%',
+    marginBottom: 18,
   },
   audioEditableInput: {
     width: '100%',

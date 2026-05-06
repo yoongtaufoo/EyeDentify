@@ -899,7 +899,38 @@ export default function ChatScreen({ navigation }) {
   // ============================================================
   // RENDER: CHAT HISTORY ITEM
   // ============================================================
-  const renderMessageItem = ({ item }) => {
+
+  const getDateKey = (ts) => {
+    if (!ts) return null;
+    const d = new Date(ts);
+    return d.toISOString().split('T')[0]; // YYYY-MM-DD
+  };
+
+  const formatDateSeparator = (ts) => {
+    if (!ts) return '';
+    const d = new Date(ts);
+    const now = new Date();
+    const yesterday = new Date(now);
+    yesterday.setDate(yesterday.getDate() - 1);
+    
+    const dStr = d.toISOString().split('T')[0];
+    const nowStr = now.toISOString().split('T')[0];
+    const yesterdayStr = yesterday.toISOString().split('T')[0];
+    
+    if (dStr === nowStr) return 'Today';
+    if (dStr === yesterdayStr) return 'Yesterday';
+    return d.toLocaleDateString([], { month: 'short', day: 'numeric', year: d.getFullYear() !== now.getFullYear() ? 'numeric' : undefined });
+  };
+
+  const renderDateSeparator = (date) => (
+    <View style={styles.dateSeparator} key={`date-${date}`}>
+      <View style={styles.dateSeparatorLine} />
+      <Text style={styles.dateSeparatorText}>{formatDateSeparator(new Date(date))}</Text>
+      <View style={styles.dateSeparatorLine} />
+    </View>
+  );
+
+  const renderMessageItem = ({ item, index }) => {
     const isUser = item.role === 'user';
 
     if (item.isProcessingPlaceholder) {
@@ -911,83 +942,150 @@ export default function ChatScreen({ navigation }) {
       );
     }
 
+    // Chronological Evaluation Layer
+    const currentMessageDate = getDateKey(item.timestamp);
+    const previousMessageDate = index > 0 ? getDateKey(messages[index - 1].timestamp) : null;
+    const shouldDrawSeparator = currentMessageDate && currentMessageDate !== previousMessageDate;
+
     return (
-      <TouchableOpacity
-        style={[
-          styles.messageBubble,
-          isUser ? styles.userBubble : styles.assistantBubble,
-        ]}
-        activeOpacity={0.7}
-        onPress={() => {
-          // Instantly stop any ongoing speech and announce the bubble text
-          Speech.stop();
-          Speech.speak(item.content, { rate: 0.88 });
-        }}
-        accessible={true}
-        accessibilityLabel={`${isUser ? 'You said' : 'EyeDentify replied'}: ${item.content}`}
-        accessibilityRole="button" // Changed from "text" to "button" to flag it as interactable
-        accessibilityHint="Double tap to hear this message spoken aloud"
-      >
-        {/* Show captured image thumbnail for user image captures */}
-        {item.imageUri && (
-          <Image
-            source={{ uri: item.imageUri }}
-            style={styles.capturedImageThumbnail}
-            accessible={true}
-            accessibilityLabel="Captured image"
-          />
-        )}
-        <Text
+      <View key={item.id} style={{ width: '100%' }}>
+        {/* Render dynamic date header block whenever the day tracking shifts */}
+        {shouldDrawSeparator && renderDateSeparator(currentMessageDate)}
+
+        <TouchableOpacity
           style={[
-            styles.messageText,
-            isUser ? styles.userText : styles.assistantText,
+            styles.messageBubble,
+            isUser ? styles.userBubble : styles.assistantBubble,
           ]}
+          activeOpacity={0.7}
+          onPress={() => {
+            Speech.stop();
+            Speech.speak(item.content, { rate: 0.88 });
+          }}
+          accessible={true}
+          accessibilityLabel={`${isUser ? 'You said' : 'EyeDentify replied'}: ${item.content}`}
+          accessibilityRole="button"
+          accessibilityHint="Double tap to hear this message spoken aloud"
         >
-          {item.content}
-        </Text>
-
-        {/* Show detected transcription text above Play Voice button */}
-        {item.transcribedText && (
-          <View style={styles.transcribedTextContainer}>
-            <Text style={styles.transcribedTextLabel}>Detected:</Text>
-            <Text style={styles.transcribedTextValue}>{item.transcribedText}</Text>
-          </View>
-        )}
-
-        {/* Voice playback button */}
-        {item.audioUri && (
-          <TouchableOpacity
-            style={styles.voicePlayButton}
-            onPress={() => handlePlayVoice(item.audioUri)}
-            accessible={true}
-            focusable={true}
-            accessibilityRole="button"
-            accessibilityLabel="Play voice message"
-            accessibilityHint="Double tap to listen to the voice message"
-            onFocus={() => speakOnFocus('Play voice message button. Tap to listen to the voice message.')}
-          >
-            <Text style={styles.voicePlayText}>▶︎ Play voice</Text>
-          </TouchableOpacity>
-        )}
-
-        {/* Show detected objects if present */}
-        {item.objects && item.objects.length > 0 && (
-          <Text style={styles.objectsText}>
-            Objects detected: {item.objects.map((o) => o.label || o).join(', ')}
+          {item.imageUri && (
+            <Image source={{ uri: item.imageUri }} style={styles.capturedImageThumbnail} />
+          )}
+          <Text style={[styles.messageText, isUser ? styles.userText : styles.assistantText]}>
+            {item.content}
           </Text>
-        )}
 
-        <Text style={styles.timestamp}>
-          {item.timestamp
-            ? new Date(item.timestamp).toLocaleTimeString([], {
-                hour: '2-digit',
-                minute: '2-digit',
-              })
-            : ''}
-        </Text>
-      </TouchableOpacity>
+          {item.transcribedText && (
+            <View style={styles.transcribedTextContainer}>
+              <Text style={styles.transcribedTextLabel}>Detected:</Text>
+              <Text style={styles.transcribedTextValue}>{item.transcribedText}</Text>
+            </View>
+          )}
+
+          {item.audioUri && (
+            <TouchableOpacity style={styles.voicePlayButton} onPress={() => handlePlayVoice(item.audioUri)}>
+              <Text style={styles.voicePlayText}>▶︎ Play voice</Text>
+            </TouchableOpacity>
+          )}
+
+          <Text style={styles.timestamp}>
+            {item.timestamp
+              ? new Date(item.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+              : ''}
+          </Text>
+        </TouchableOpacity>
+      </View>
     );
   };
+
+  // const renderMessageItem = ({ item }) => {
+  //   const isUser = item.role === 'user';
+
+  //   if (item.isProcessingPlaceholder) {
+  //     return (
+  //       <View style={[styles.messageBubble, styles.processingBubble]}>
+  //         <ActivityIndicator size="small" color="#F5A623" />
+  //         <Text style={styles.processingText}>{item.content}</Text>
+  //       </View>
+  //     );
+  //   }
+
+  //   return (
+  //     <TouchableOpacity
+  //       style={[
+  //         styles.messageBubble,
+  //         isUser ? styles.userBubble : styles.assistantBubble,
+  //       ]}
+  //       activeOpacity={0.7}
+  //       onPress={() => {
+  //         // Instantly stop any ongoing speech and announce the bubble text
+  //         Speech.stop();
+  //         Speech.speak(item.content, { rate: 0.88 });
+  //       }}
+  //       accessible={true}
+  //       accessibilityLabel={`${isUser ? 'You said' : 'EyeDentify replied'}: ${item.content}`}
+  //       accessibilityRole="button" // Changed from "text" to "button" to flag it as interactable
+  //       accessibilityHint="Double tap to hear this message spoken aloud"
+  //     >
+  //       {/* Show captured image thumbnail for user image captures */}
+  //       {item.imageUri && (
+  //         <Image
+  //           source={{ uri: item.imageUri }}
+  //           style={styles.capturedImageThumbnail}
+  //           accessible={true}
+  //           accessibilityLabel="Captured image"
+  //         />
+  //       )}
+  //       <Text
+  //         style={[
+  //           styles.messageText,
+  //           isUser ? styles.userText : styles.assistantText,
+  //         ]}
+  //       >
+  //         {item.content}
+  //       </Text>
+
+  //       {/* Show detected transcription text above Play Voice button */}
+  //       {item.transcribedText && (
+  //         <View style={styles.transcribedTextContainer}>
+  //           <Text style={styles.transcribedTextLabel}>Detected:</Text>
+  //           <Text style={styles.transcribedTextValue}>{item.transcribedText}</Text>
+  //         </View>
+  //       )}
+
+  //       {/* Voice playback button */}
+  //       {item.audioUri && (
+  //         <TouchableOpacity
+  //           style={styles.voicePlayButton}
+  //           onPress={() => handlePlayVoice(item.audioUri)}
+  //           accessible={true}
+  //           focusable={true}
+  //           accessibilityRole="button"
+  //           accessibilityLabel="Play voice message"
+  //           accessibilityHint="Double tap to listen to the voice message"
+  //           onFocus={() => speakOnFocus('Play voice message button. Tap to listen to the voice message.')}
+  //         >
+  //           <Text style={styles.voicePlayText}>▶︎ Play voice</Text>
+  //         </TouchableOpacity>
+  //       )}
+
+  //       {/* Show detected objects if present */}
+  //       {item.objects && item.objects.length > 0 && (
+  //         <Text style={styles.objectsText}>
+  //           Objects detected: {item.objects.map((o) => o.label || o).join(', ')}
+  //         </Text>
+  //       )}
+
+  //       <Text style={styles.timestamp}>
+  //         {item.timestamp
+  //           ? new Date(item.timestamp).toLocaleTimeString([], {
+  //               hour: '2-digit',
+  //               minute: '2-digit',
+  //             })
+  //           : ''}
+  //       </Text>
+  //     </TouchableOpacity>
+  //   );
+  // };
 
   // ============================================================
   // MAIN RENDER
@@ -1622,5 +1720,26 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingVertical: 8,
     borderRadius: 16,
+  },
+  // Date Separator Elements
+  dateSeparator: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginVertical: 20,
+    paddingHorizontal: 14,
+    width: '100%',
+  },
+  dateSeparatorLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: '#E5E5E5',
+  },
+  dateSeparatorText: {
+    color: '#999999',
+    fontSize: 12,
+    fontWeight: '600',
+    marginHorizontal: 16,
+    letterSpacing: 0.3,
   },
 });
