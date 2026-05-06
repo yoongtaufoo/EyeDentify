@@ -51,24 +51,63 @@ export default function HomeScreen({ navigation }) {
     camera: { connected: null, label: 'Checking...' },
   });
 
+  // useEffect(() => {
+  //   const loadRecent = async () => {
+  //     try {
+  //       if (!user) return;
+  //       const userId = user?.id || user?.user_id;
+  //       if (!userId) return;
+  //       const history = await getChatHistory(userId);
+  //       setRecentMessages(history.slice(0, 5));
+  //       setStats({
+  //         chats: history.length || 0,
+  //         memories: history.filter(m => m.memory_id).length || 0,
+  //       });
+  //     } catch (err) {
+  //       console.error('[Home] Failed to load recent:', err);
+  //     }
+  //   };
+  //   loadRecent();
+  // }, [user]);
+
+  // Live Home Feed Engine: Listens for tab entries and runs background updates
   useEffect(() => {
-    const loadRecent = async () => {
+    const loadRecentActivity = async () => {
       try {
         if (!user) return;
         const userId = user?.id || user?.user_id;
         if (!userId) return;
+
         const history = await getChatHistory(userId);
-        setRecentMessages(history.slice(0, 5));
-        setStats({
-          chats: history.length || 0,
-          memories: history.filter(m => m.memory_id).length || 0,
-        });
+        if (history) {
+          const latestActivities = [...history].reverse().slice(0, 5);
+          setRecentMessages(latestActivities);
+          setStats({
+            chats: history.length || 0,
+            memories: history.filter(m => m.memory_id).length || 0,
+          });
+        }
       } catch (err) {
-        console.error('[Home] Failed to load recent:', err);
+        console.error('[App Home Sync] Dashboard reload error:', err);
       }
     };
-    loadRecent();
-  }, [user]);
+
+    // 1. Initial display pull
+    loadRecentActivity();
+
+    // 2. Re-calculate activity lists and stats whenever user jumps onto Dashboard tab
+    const unsubscribeFocus = navigation.addListener('focus', () => {
+      loadRecentActivity();
+    });
+
+    // 3. Periodic synchronization timer
+    const pollingTimer = setInterval(loadRecentActivity, 4000);
+
+    return () => {
+      unsubscribeFocus();
+      clearInterval(pollingTimer);
+    };
+  }, [navigation, user]);
 
   // Speak welcome whenever the user enters or returns to the Home tab
   useEffect(() => {

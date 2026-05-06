@@ -223,23 +223,50 @@ export default function HomeScreen({ user, onNavigate, onLogout }) {
   const [recentMessages, setRecentMessages] = useState([]);
   const [stats, setStats] = useState({ chats: 0, memories: 0 });
 
+  // useEffect(() => {
+  //   const loadRecent = async () => {
+  //     try {
+  //       if (!user) return;
+  //       const userId = user?.id || user?.user_id;
+  //       if (!userId) return;
+  //       const history = await getChatHistory(userId);
+  //       setRecentMessages(history.slice(0, 5));
+  //       setStats({
+  //         chats: history.length || 0,
+  //         memories: history.filter(m => m.memory_id).length || 0,
+  //       });
+  //     } catch (err) {
+  //       console.error('[Home] Failed to load recent:', err);
+  //     }
+  //   };
+  //   loadRecent();
+  // }, [user]);
+
+  // Live Dashboard Tracker: Pulls down metric increments automatically every 4s
   useEffect(() => {
     const loadRecent = async () => {
       try {
         if (!user) return;
         const userId = user?.id || user?.user_id;
         if (!userId) return;
+
         const history = await getChatHistory(userId);
-        setRecentMessages(history.slice(0, 5));
-        setStats({
-          chats: history.length || 0,
-          memories: history.filter(m => m.memory_id).length || 0,
-        });
+        if (history) {
+          setRecentMessages([...history].reverse().slice(0, 5));
+          setStats({
+            chats: history.length || 0,
+            memories: history.filter(m => m.memory_id).length || 0,
+          });
+        }
       } catch (err) {
-        console.error('[Home] Failed to load recent:', err);
+        console.error('[Web Home Sync] Metric compilation failed:', err);
       }
     };
+
     loadRecent();
+
+    const syncInterval = setInterval(loadRecent, 4000);
+    return () => clearInterval(syncInterval);
   }, [user]);
 
   const getGreeting = () => {
