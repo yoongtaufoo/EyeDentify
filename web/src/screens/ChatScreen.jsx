@@ -127,12 +127,43 @@ const ChatScreen = ({ user, onLogout }) => {
   // Load chat history
   // Polling Sync Engine: Automatically updates history on focus and monitors hardware pipelines every 4s
   useEffect(() => {
+    // const loadHistory = async () => {
+    //   if (!user) return;
+    //   const userId = uid();
+    //   if (!userId) return;
+
+    //   // POLLING GUARD: Stop background synchronization if a chat request is processing
+    //   if (isLoadingRef.current || processingAction || isVoiceRecording) return;
+
+    //   try {
+    //     const history = await getChatHistory(userId);
+    //     if (history && history.length > 0) {
+    //       const restored = history.map(msg => ({
+    //         role: msg.role,
+    //         text: msg.content,
+    //         timestamp: new Date(msg.created_at).getTime() || Date.now(),
+    //         memoryId: msg.memory_id || null,
+    //         imageUri: msg.image_uri || null,
+    //       }));
+          
+    //       // Only update state if message counts shift to avoid redundant page flashing
+    //       setMessages(prev => {
+    //         if (prev.length !== restored.length) {
+    //           return restored;
+    //         }
+    //         return prev;
+    //       });
+    //     }
+    //   } catch (err) {
+    //     console.error('[Web Chat Sync] Background sync failed:', err);
+    //   }
+    // };
+
     const loadHistory = async () => {
       if (!user) return;
       const userId = uid();
       if (!userId) return;
 
-      // POLLING GUARD: Stop background synchronization if a chat request is processing
       if (isLoadingRef.current || processingAction || isVoiceRecording) return;
 
       try {
@@ -146,9 +177,21 @@ const ChatScreen = ({ user, onLogout }) => {
             imageUri: msg.image_uri || null,
           }));
           
-          // Only update state if message counts shift to avoid redundant page flashing
+          // ONLY INTERCEPT COMPILATION LIFECYCLES HERE
           setMessages(prev => {
             if (prev.length !== restored.length) {
+              
+              // 💡 HARDWARE INTERCEPTOR: If a new message arrives from the hardware pipeline
+              if (prev.length > 0 && restored.length > prev.length) {
+                const newItems = restored.slice(prev.length);
+                const lastNewItem = newItems[newItems.length - 1];
+                
+                // If the latest incoming background message belongs to the AI, speak it
+                if (lastNewItem && lastNewItem.role === 'assistant') {
+                  speak(lastNewItem.text);
+                }
+              }
+              
               return restored;
             }
             return prev;
@@ -972,7 +1015,8 @@ const ChatScreen = ({ user, onLogout }) => {
         )}
 
         {/* Typing indicator */}
-        {isLoading && messages.length > 0 && (
+        {/* {isLoading && messages.length > 0 && ( */}
+        {(isLoading || (messages.length > 0 && messages[messages.length - 1].role === 'user')) && (
           <div style={S.typingIndicator} role="status" aria-label="AI typing">
             <div style={{...S.dot, animationDelay:'0s'}}></div>
             <div style={{...S.dot, animationDelay:'0.2s'}}></div>

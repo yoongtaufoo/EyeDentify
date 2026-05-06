@@ -23,10 +23,16 @@ const styles = {
   layout: {
     display: 'flex',
     flexDirection: 'column',
-    height: '100vh',
+    // height: '100vh',
     backgroundColor: '#F7F7F7',
     fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
     overflow: 'hidden',
+    height: '100vh',          // Enforces layout to match browser window size exactly
+    width: '100vw',
+    margin: 0,
+    padding: 0,
+    boxSizing: 'border-box',
+    position: 'relative',
   },
   content: {
     flex: 1,
@@ -121,21 +127,21 @@ export default function MainLayout({ user, onLogout }) {
 
   // Hardware connection state simulation
   // In production, this would poll actual hardware endpoints
-  const [hwStatus, setHwStatus] = useState({
-    device: { connected: null, label: 'Checking...' },
-    camera: { connected: null, label: 'Checking...' },
-  });
+  // const [hwStatus, setHwStatus] = useState({
+  //   device: { connected: null, label: 'Checking...' },
+  //   camera: { connected: null, label: 'Checking...' },
+  // });
 
-  useEffect(() => {
-    // Simulate hardware check - replace with real endpoint calls
-    const timer = setTimeout(() => {
-      setHwStatus({
-        device: { connected: false, label: 'Hardware Device' },
-        camera: { connected: navigator?.mediaDevices ? true : false, label: 'Camera' },
-      });
-    }, 1500);
-    return () => clearTimeout(timer);
-  }, []);
+  // useEffect(() => {
+  //   // Simulate hardware check - replace with real endpoint calls
+  //   const timer = setTimeout(() => {
+  //     setHwStatus({
+  //       device: { connected: false, label: 'Hardware Device' },
+  //       camera: { connected: navigator?.mediaDevices ? true : false, label: 'Camera' },
+  //     });
+  //   }, 1500);
+  //   return () => clearTimeout(timer);
+  // }, []);
 
   const renderContent = () => {
     switch (activeTab) {
@@ -167,7 +173,7 @@ export default function MainLayout({ user, onLogout }) {
   return (
     <div style={styles.layout}>
       {/* Hardware Status Bar */}
-      <div style={styles.hwStatusBar}>
+      {/* <div style={styles.hwStatusBar}>
         <span style={styles.hwLabel}>Hardware</span>
         <div style={styles.hwStatusLeft}>
           <div style={{
@@ -190,7 +196,7 @@ export default function MainLayout({ user, onLogout }) {
         <div style={{ ...styles.hwItem, color: '#BBB', fontSize: 10.5 }}>
           EyeDentify v2.0
         </div>
-      </div>
+      </div> */}
 
       <div style={styles.content}>
         {renderContent()}

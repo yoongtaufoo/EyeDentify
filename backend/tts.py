@@ -14,16 +14,59 @@ _DEFAULT_VOICE = "en-US-JennyNeural"  # Calm, clear female voice
 _FALLBACK_VOICE = "en-US-GuyNeural"   # Backup male voice
 
 
+# async def text_to_speech(text: str, voice: str = None) -> bytes:
+#     """
+#     Convert text to MP3 audio bytes using edge-tts.
+    
+#     Args:
+#         text: The text to speak
+#         voice: The edge-tts voice name (default: en-US-JennyNeural)
+        
+#     Returns:
+#         MP3 audio bytes, or empty bytes on failure
+#     """
+#     if not text or not text.strip():
+#         print("[TTS] Empty text received, skipping")
+#         return b""
+    
+#     try:
+#         import edge_tts
+        
+#         voice = voice or _DEFAULT_VOICE
+#         communicate = edge_tts.Communicate(text, voice)
+        
+#         # Generate to temporary file, then read back as bytes
+#         with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp:
+#             tmp_path = tmp.name
+        
+#         await communicate.save(tmp_path)
+        
+#         with open(tmp_path, "rb") as f:
+#             audio_bytes = f.read()
+        
+#         # Clean up temp file
+#         try:
+#             os.unlink(tmp_path)
+#         except:
+#             pass
+        
+#         print(f"[TTS] Generated {len(audio_bytes)} bytes of audio for text ({len(text)} chars)")
+#         return audio_bytes
+        
+#     except ImportError:
+#         print("[TTS] edge-tts not installed, falling back to dummy response")
+#         return b""
+#     except Exception as e:
+#         print(f"[TTS] Error generating speech: {e}")
+#         # Retry with fallback voice if not already using it
+#         if voice and voice != _FALLBACK_VOICE:
+#             print(f"[TTS] Retrying with fallback voice {_FALLBACK_VOICE}...")
+#             return await text_to_speech(text, _FALLBACK_VOICE)
+#         return b""
+
 async def text_to_speech(text: str, voice: str = None) -> bytes:
     """
     Convert text to MP3 audio bytes using edge-tts.
-    
-    Args:
-        text: The text to speak
-        voice: The edge-tts voice name (default: en-US-JennyNeural)
-        
-    Returns:
-        MP3 audio bytes, or empty bytes on failure
     """
     if not text or not text.strip():
         print("[TTS] Empty text received, skipping")
@@ -35,9 +78,10 @@ async def text_to_speech(text: str, voice: str = None) -> bytes:
         voice = voice or _DEFAULT_VOICE
         communicate = edge_tts.Communicate(text, voice)
         
-        # Generate to temporary file, then read back as bytes
-        with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp:
-            tmp_path = tmp.name
+        # --- FIXED FOR WINDOWS FILE LOCKING ---
+        tmp = tempfile.NamedTemporaryFile(suffix=".mp3", delete=False)
+        tmp_path = tmp.name
+        tmp.close() # Release the file handle lock instantly so edge-tts can write to it!
         
         await communicate.save(tmp_path)
         
@@ -58,7 +102,6 @@ async def text_to_speech(text: str, voice: str = None) -> bytes:
         return b""
     except Exception as e:
         print(f"[TTS] Error generating speech: {e}")
-        # Retry with fallback voice if not already using it
         if voice and voice != _FALLBACK_VOICE:
             print(f"[TTS] Retrying with fallback voice {_FALLBACK_VOICE}...")
             return await text_to_speech(text, _FALLBACK_VOICE)
