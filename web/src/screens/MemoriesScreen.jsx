@@ -198,8 +198,11 @@ export default function MemoriesScreen({ user }) {
         
         const history = await getChatHistory(userId);
         // Filter messages that have image_uri or memory_id (saved memories)
+        // const savedMemories = history.filter(
+        //   m => m.image_uri || m.memory_id || (m.content && m.role === 'assistant' && m.memory_id)
+        // );
         const savedMemories = history.filter(
-          m => m.image_uri || m.memory_id || (m.content && m.role === 'assistant' && m.memory_id)
+          m => m.role === 'assistant' && (m.image_uri || m.memory_id)
         );
         setMemories(savedMemories || []);
       } catch (err) {

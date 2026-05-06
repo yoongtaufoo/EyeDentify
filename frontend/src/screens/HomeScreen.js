@@ -46,10 +46,10 @@ export default function HomeScreen({ navigation }) {
   const { user, signOut } = useAuth();
   const [recentMessages, setRecentMessages] = useState([]);
   const [stats, setStats] = useState({ chats: 0, memories: 0 });
-  const [hwStatus, setHwStatus] = useState({
-    device: { connected: null, label: 'Checking...' },
-    camera: { connected: null, label: 'Checking...' },
-  });
+  // const [hwStatus, setHwStatus] = useState({
+  //   device: { connected: null, label: 'Checking...' },
+  //   camera: { connected: null, label: 'Checking...' },
+  // });
 
   // useEffect(() => {
   //   const loadRecent = async () => {
@@ -139,15 +139,15 @@ export default function HomeScreen({ navigation }) {
   }, [navigation, user]);
 
   // Simulate hardware status check
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      setHwStatus({
-        device: { connected: false, label: 'Hardware' },
-        camera: { connected: true, label: 'Camera' },
-      });
-    }, 1500);
-    return () => clearTimeout(timer);
-  }, []);
+  // useEffect(() => {
+  //   const timer = setTimeout(() => {
+  //     setHwStatus({
+  //       device: { connected: false, label: 'Hardware' },
+  //       camera: { connected: true, label: 'Camera' },
+  //     });
+  //   }, 1500);
+  //   return () => clearTimeout(timer);
+  // }, []);
 
   // Handle logout
   const handleLogout = async () => {
@@ -253,7 +253,7 @@ export default function HomeScreen({ navigation }) {
       </View>
 
       {/* Hardware Status Bar */}
-      <View style={styles.hwStatusBar}>
+      {/* <View style={styles.hwStatusBar}>
         <Text style={styles.hwLabel}>Hardware</Text>
         <View style={styles.hwStatusRight}>
           <View style={styles.hwItem}>
@@ -265,7 +265,7 @@ export default function HomeScreen({ navigation }) {
             <Text style={[styles.hwItemText, hwStatus.camera.connected === true ? styles.hwTextConnected : hwStatus.camera.connected === false ? styles.hwTextDisconnected : styles.hwTextUnknown]}>{hwStatus.camera.label}</Text>
           </View>
         </View>
-      </View>
+      </View> */}
 
       <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
         {/* Welcome */}

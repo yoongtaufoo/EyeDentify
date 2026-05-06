@@ -60,11 +60,14 @@ export default function MemoriesScreen({ navigation }) {
 
         const history = await getChatHistory(userId);
         // Filter messages that have image_uri or memory_id (saved memories)
+        // const savedMemories = history.filter(
+        //   (m) =>
+        //     m.image_uri ||
+        //     m.memory_id ||
+        //     (m.content && m.role === 'assistant' && m.memory_id)
+        // );
         const savedMemories = history.filter(
-          (m) =>
-            m.image_uri ||
-            m.memory_id ||
-            (m.content && m.role === 'assistant' && m.memory_id)
+          (m) => m.role === 'assistant' && (m.image_uri || m.memory_id)
         );
         setMemories(savedMemories || []);
       } catch (err) {
@@ -136,6 +139,9 @@ export default function MemoriesScreen({ navigation }) {
   );
 
   const renderMemoryCard = ({ item, index }) => {
+    if (item.isBlank) {
+      return <View style={[styles.card, { backgroundColor: 'transparent', borderWidth: 0 }]} />;
+    }
     const { date, time } = formatDateTime(item.created_at);
     return (
       <TouchableOpacity
@@ -222,7 +228,8 @@ export default function MemoriesScreen({ navigation }) {
       {/* Memory Grid */}
       {memories.length > 0 ? (
         <FlatList
-          data={memories}
+          // FIX: If array length is odd, append a dummy item to balance the columns
+          data={memories.length % 2 === 0 ? memories : [...memories, { isBlank: true }]}
           keyExtractor={(item, index) => `mem-${index}`}
           renderItem={renderMemoryCard}
           numColumns={2}

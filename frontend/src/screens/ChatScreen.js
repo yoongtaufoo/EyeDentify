@@ -129,8 +129,36 @@ export default function ChatScreen({ navigation }) {
     // Fetch profile string parameters once on layout mount
     fetchUserProfile();
 
+    // const syncChatHistory = async () => {
+    //   // POLLING GUARD: Bypass server synchronization if an operations thread is active
+    //   if (loadingRef.current || isProcessingImage || isRecording) return;
+
+    //   try {
+    //     const history = await getChatHistory(user.id);
+    //     if (history && history.length > 0) {
+    //       const formatted = history.map((msg) => ({
+    //         id: msg.id || String(Math.random()),
+    //         role: msg.role,
+    //         content: msg.content,
+    //         timestamp: msg.created_at || undefined,
+    //         imageUri: msg.image_uri || null,
+    //         memoryId: msg.memory_id || null,
+    //       }));
+          
+    //       setMessages(prev => {
+    //         // Protect structural state if array lengths haven't changed
+    //         if (prev.length !== formatted.length) {
+    //           return formatted;
+    //         }
+    //         return prev;
+    //       });
+    //     }
+    //   } catch (err) {
+    //     console.error('[App Chat Sync] Database fetch error:', err);
+    //   }
+    // };
+
     const syncChatHistory = async () => {
-      // POLLING GUARD: Bypass server synchronization if an operations thread is active
       if (loadingRef.current || isProcessingImage || isRecording) return;
 
       try {
@@ -145,9 +173,22 @@ export default function ChatScreen({ navigation }) {
             memoryId: msg.memory_id || null,
           }));
           
+          // ONLY INTERCEPT COMPILATION LIFECYCLES HERE
           setMessages(prev => {
-            // Protect structural state if array lengths haven't changed
             if (prev.length !== formatted.length) {
+              
+              // 💡 HARDWARE INTERCEPTOR: If data size expands while screen is active
+              if (prev.length > 0 && formatted.length > prev.length) {
+                const newItems = formatted.slice(prev.length);
+                const lastNewItem = newItems[newItems.length - 1];
+                
+                // If the latest incoming item is a Pi hardware AI response, read it aloud
+                if (lastNewItem && lastNewItem.role === 'assistant') {
+                  Speech.stop();
+                  Speech.speak(lastNewItem.content, { rate: 0.88 });
+                }
+              }
+              
               return formatted;
             }
             return prev;
@@ -1195,10 +1236,16 @@ export default function ChatScreen({ navigation }) {
               />
 
               {/* Loading / Thinking indicator */}
-              {(loading || isRecording) && (
-                <View style={styles.typingIndicator}>
-                  <ActivityIndicator size="small" color="#F5A623" />
-                  <Text style={styles.typingText}>
+              {/* {(loading || isRecording) && ( */}
+              {(loading || isRecording || (messages.length > 0 && messages[messages.length - 1].role === 'user')) && (
+                <View 
+                  style={[
+                    styles.messageBubble, 
+                    isRecording ? styles.userListeningBubble : styles.aiThinkingBubble
+                  ]}
+                >
+                  <ActivityIndicator size="small" color={isRecording ? "#4CAF50" : "#F5A623"} />
+                  <Text style={[styles.typingText, isRecording ? styles.userListeningText : styles.aiThinkingText]}>
                     {isRecording ? 'Listening...' : 'Thinking...'}
                   </Text>
                 </View>
@@ -1613,12 +1660,47 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     paddingLeft: 14,
   },
-  typingText: {
-    color: '#888',
-    fontSize: 13,
-    marginLeft: 8,
-    fontStyle: 'italic',
+  // Typing indicator containers - matches assistant Bubble shapes
+  aiThinkingBubble: {
+    alignSelf: 'flex-start',
+    backgroundColor: '#FDF3D8', // Warm yellow matching website bubbleBot
+    borderBottomLeftRadius: 6,
+    borderWidth: 1,
+    borderColor: 'rgba(245,166,35,0.15)',
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginLeft: 12,
+    marginBottom: 10,
   },
+  userListeningBubble: {
+    alignSelf: 'flex-end',
+    backgroundColor: '#E8F8EC', // Soft green matching recording state highlights
+    borderBottomRightRadius: 6,
+    borderWidth: 1,
+    borderColor: 'rgba(76,175,80,0.2)',
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginRight: 12,
+    marginBottom: 10,
+  },
+  typingText: {
+    fontSize: 14,
+    fontWeight: '600',
+    fontStyle: 'italic',
+    marginLeft: 8,
+  },
+  aiThinkingText: {
+    color: '#D4940B',
+  },
+  userListeningText: {
+    color: '#2E7D32',
+  },
+  // typingText: {
+  //   color: '#888',
+  //   fontSize: 13,
+  //   marginLeft: 8,
+  //   fontStyle: 'italic',
+  // },
 
   // Bottom input bar - light theme
   bottomBar: {
