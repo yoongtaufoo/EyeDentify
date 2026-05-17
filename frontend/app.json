@@ -16,7 +16,9 @@
       "supportsTablet": true,
       "infoPlist": {
         "NSMicrophoneUsageDescription": "This app uses the microphone to transcribe your voice for email input.",
-        "UIBackgroundModes": ["audio"]
+        "UIBackgroundModes": [
+          "audio"
+        ]
       },
       "bundleIdentifier": "com.anonymous.frontend"
     },
@@ -50,6 +52,11 @@
           "microphonePermission": "Allow EyeDentify to access the microphone."
         }
       ]
-    ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "592d7308-0673-40a1-b3af-57b48a3d20a9"
+      }
+    }
   }
 }

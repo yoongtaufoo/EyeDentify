@@ -10,11 +10,11 @@ httpx>=0.28.0
 # Supabase
 supabase>=2.15.0
 
-# AI - GLM (Chatbot reasoning via z.ai / OpenAI compatible)
-openai>=1.60.0
-
-# AI - Google Gemini (Gemma image description)
+# AI - Google Gemma (Chatbot + Vision via Google AI Studio)
 google-generativeai>=0.8.0
+
+# Image processing (PIL for vision model input)
+Pillow>=10.0.0
 
 # YOLO Object Detection
 ultralytics>=8.3.0

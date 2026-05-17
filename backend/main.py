@@ -219,7 +219,7 @@ async def logout(request: Request):
 
 # ============================================================
 # VISION ENDPOINT (shared by phone + Pi)
-# POST /vision/process - upload image -> YOLO + Gemma -> save memory
+# POST /vision/process - upload image -> Gemma vision -> save memory
 # ============================================================
 
 @app.post("/vision/process")
@@ -243,6 +243,7 @@ async def vision_process(
     Returns: { description, objects, memory_id, image_url }
     Also saves both user capture + AI response to chat_history so images persist on restart.
     """
+    import asyncio
     try:
         # Read image from either source
         if image_base64:
@@ -268,11 +269,19 @@ async def vision_process(
         from vision import process_image
         from database import save_chat_message
         
-        result = await process_image(
-            user_id=user_id,
-            image_bytes=image_data,
-            source=source,
-        )
+        # Add timeout to vision processing
+        try:
+            result = await asyncio.wait_for(
+                process_image(
+                    user_id=user_id,
+                    image_bytes=image_data,
+                    source=source,
+                ),
+                timeout=45.0  # 45 second timeout for vision (includes Gemma call)
+            )
+        except asyncio.TimeoutError:
+            print(f"[API] Vision processing timed out after 45s")
+            raise HTTPException(status_code=500, detail="Image analysis timed out. Please try again.")
 
         # Save to chat_history so vision messages survive app restarts
         save_chat_message(
@@ -289,8 +298,12 @@ async def vision_process(
         )
 
         return result
+    except HTTPException:
+        raise
     except Exception as e:
-        print(f"[API] Vision error: {e}")
+        print(f"[API] Vision error: {type(e).__name__}: {e}")
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Vision processing failed: {str(e)}")
 
 
@@ -344,29 +357,46 @@ async def chat_send(
       
     SHARED - both phone and Pi use this.
     """
+    import asyncio
     try:
         # Step 1: Transcribe audio if provided
         audio_text = None
         if audio_base64:
             from audio import transcribe_audio_base64
-            audio_text = await transcribe_audio_base64(audio_base64)
+            try:
+                audio_text = await asyncio.wait_for(
+                    transcribe_audio_base64(audio_base64),
+                    timeout=15.0
+                )
+            except asyncio.TimeoutError:
+                print(f"[API] Audio transcription timed out")
+                audio_text = None
             message = audio_text or ""
             if not audio_text:
                 return {"response": "I couldn't understand that audio. Could you try again?"}
         
-        # Step 2: Process through chat engine
+        # Step 2: Process through chat engine with timeout
         from chat import handle_chat
-        response_text = await handle_chat(
-            user_id=user_id,
-            message=message,
-            current_description=current_description,
-            current_memory_id=current_memory_id,
-        )
+        try:
+            response_text = await asyncio.wait_for(
+                handle_chat(
+                    user_id=user_id,
+                    message=message,
+                    current_description=current_description,
+                    current_memory_id=current_memory_id,
+                ),
+                timeout=30.0  # 30 second timeout for chat
+            )
+        except asyncio.TimeoutError:
+            print(f"[API] Chat processing timed out after 30s")
+            response_text = "I'm thinking but taking too long. Could you try again?"
         
         return {"response": response_text, "audio_text": audio_text}
     
     except Exception as e:
-        print(f"[API] Chat error: {e}")
+        print(f"[API] Chat error: {type(e).__name__}: {e}")
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Chat processing failed: {str(e)}")
 
 
@@ -418,9 +448,14 @@ async def chat_tts(
     
     Returns: { audio_base64: str, format: "mp3", success: bool }
     """
+    import asyncio
     from tts import text_to_speech_base64
     try:
-        audio_b64 = await text_to_speech_base64(text, voice)
+        # Add timeout to prevent hanging
+        audio_b64 = await asyncio.wait_for(
+            text_to_speech_base64(text, voice),
+            timeout=20.0
+        )
         if not audio_b64:
             raise HTTPException(status_code=500, detail="TTS generation failed")
         
@@ -429,10 +464,15 @@ async def chat_tts(
             "format": "mp3",
             "success": True,
         }
+    except asyncio.TimeoutError:
+        print(f"[TTS API] TTS generation timed out after 20s")
+        raise HTTPException(status_code=500, detail="TTS generation timed out")
     except HTTPException:
         raise
     except Exception as e:
-        print(f"[TTS] Error: {e}")
+        print(f"[TTS API] Error: {type(e).__name__}: {e}")
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"TTS failed: {str(e)}")
 
 
@@ -453,7 +493,7 @@ async def chat_send_audio(
     Send a message and get back BOTH response text AND audio (base64 MP3).
     
     This is the recommended endpoint for hardware devices:
-    1. Sends message through AI chat (GLM -> Gemma fallback)
+    1. Sends message through AI chat (Gemma)
     2. Converts response to speech using edge-tts
     3. Returns both so the hardware can play it immediately
     
@@ -469,7 +509,7 @@ async def chat_send_audio(
             if not audio_text:
                 return {"response": "I couldn't understand that audio. Could you try again?", "audio_base64": "", "audio_text": ""}
         
-        # Step 2: Process through chat engine (GLM primary, Gemma fallback)
+        # Step 2: Process through chat engine (Gemma)
         from chat import handle_chat
         from tts import text_to_speech_base64
         
