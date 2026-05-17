@@ -8,7 +8,8 @@
 import * as FileSystem from 'expo-file-system/legacy';
 import { manipulateAsync, SaveFormat } from 'expo-image-manipulator';
 
-const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL || 'http://192.168.100.9:8000';
+// Use environment variable if available, otherwise use relative URL (localhost for development)
+const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL || 'http://localhost:8000';
 
 // ============================================================
 // AUTH

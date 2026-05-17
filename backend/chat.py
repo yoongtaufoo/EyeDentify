@@ -1,9 +1,8 @@
 """
-chat.py - GLM Chatbot engine with Gemma fallback.
+chat.py - Gemma Chatbot engine.
 Handles all conversational logic including date-based memory queries.
 
-Primary: GLM (z.ai / BigModel)
-Fallback: Gemma 4 (Google AI Studio) — kicks in on rate limit (429) or other API errors.
+Uses Gemma 4 (Google AI Studio / google-generativeai) as the primary model.
 
 SHARED by both in-app chat and hardware chat modules.
 """
@@ -15,27 +14,22 @@ from openai import AsyncOpenAI
 from database import get_chat_history, save_chat_message, get_memories_by_date, get_recent_memories
 
 # ============================================================
-# CLIENTS
+# GEMMA CLIENT
 # ============================================================
 
-# Primary: GLM Client (z.ai / BigModel)
-glm_client = AsyncOpenAI(
-    api_key=os.getenv("GLM_API_KEY"),
-    base_url="https://open.bigmodel.cn/api/paas/v4"
-)
-
-# Fallback: Google GenerativeAI (Gemma 4) — using existing google-generativeai package
 _gemma_model = None
 
 
 def _get_gemma_model():
-    """Lazy-init Gemma model using existing google-generativeai package."""
+    """Lazy-init Gemma model using google-generativeai package."""
     global _gemma_model
     if _gemma_model is None:
         import google.generativeai as genai
         genai.configure(api_key=os.getenv("GOOGLE_AI_STUDIO_KEY"))
+        # Use Gemma 3 27B which is available via Google AI Studio / generativeai SDK
         _gemma_model = genai.GenerativeModel("gemma-4-26b-a4b-it")
     return _gemma_model
+
 
 SYSTEM_PROMPT = """You are EyeDentify, an AI assistant for blind and visually impaired users.
 You are helpful, concise, and safety-conscious. Key guidelines:
@@ -50,140 +44,149 @@ You are helpful, concise, and safety-conscious. Key guidelines:
 8. Be warm and supportive. Your user may rely on you for independence."""
 
 
-# def _strip_reasoning(text: str) -> str:
-#     """Remove leaked chain-of-thought / reasoning from model output."""
-#     import re
-#     original = text
-
-#     # Remove patterns like "* Previous context:", "* User just...", "* This could mean:"
-#     lines = text.split('\n')
-#     cleaned = []
-#     for line in lines:
-#         stripped = line.strip()
-#         # Skip lines that look like internal reasoning
-#         if not stripped:
-#             continue
-#         if stripped.startswith(('* ')) or stripped.startswith('*'):
-#             lower = stripped.lower()
-#             if any(kw in lower for kw in [
-#                 'previous context', 'user ', 'assistant', 'this could',
-#                 'option', 'they are', 'the user is', 'acknowledge', 'since an',
-#                 'link the greeting', 'testing', 'get attention', 'start new',
-#                 'contextual', 'simple'
-#             ]):
-#                 continue
-#         cleaned.append(line)
-
-#     result = '\n'.join(cleaned).strip()
-#     if not result:
-#         return original  # fallback if we stripped everything
-#     return result
-
 def _strip_reasoning(text: str) -> str:
     """Remove leaked chain-of-thought / reasoning / inline templates from model output."""
     import re
     if not text:
         return text
 
-    # 1. Strip standard XML thinking blocks (common in newer reasoning models)
+    # 0. Normalize Unicode curly/smart quotes to ASCII quotes
+    #    Gemma sometimes outputs curly quotes (" " ' ') which don't match
+    #    the ASCII quote patterns in our regexes, causing the regex to
+    #    skip past the first character and match the apostrophe in "I'm" instead.
+    text = text.replace('\u201c', '"').replace('\u201d', '"')  # " " -> " "
+    text = text.replace('\u2018', "'").replace('\u2019', "'")  # ' ' -> ' '
+
+    # 1. Strip standard XML thinking blocks
     text = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL)
 
-    # 2. Fix the inline single-line leak bug
+    # 2. AGGRESSIVE removal of self-check reasoning patterns like "No lists? Yes." or "Warm/supportive? Yes."
+    #    These can span multiple lines with indentation
+    # Match: Word(s) ? Yes/No . [optional whitespace/newlines] [rest of text]
+    # Note: [A-Za-z/\s] allows slashes (e.g., "Warm/supportive? Yes.")
+    match = re.match(
+        r'^["\']?[A-Z][A-Za-z/\s]+\?["\']?\s+(Yes|No)[.?]?\s*[\n\s]*(.+)',
+        text,
+        re.IGNORECASE | re.DOTALL
+    )
+    if match:
+        text = match.group(2).strip()
+
+    # 3. Remove parenthetical commentary (model's internal monologue)
+    #    e.g., "(Wait, the previous response was almost identical. I'll vary it slightly...)"
+    text = re.sub(r'\([^)]*\)', '', text)
+
+    # 4. Handle quoted+unquoted duplication.
+    #    The model sometimes outputs multiple quoted candidate responses followed by
+    #    the final unquoted response. The quoted and unquoted versions may differ
+    #    slightly (e.g., "thank you!" vs "thank you for asking!"), so exact
+    #    backreference matching fails. Strategy:
+    #    - Remove all quoted blocks (they are candidate responses being considered)
+    #    - Keep only the last unquoted sentence/paragraph as the final response
+    #    - If the last unquoted text is very short, fall back to the last quoted block
+    text = _extract_final_response(text)
+
+    # 5. Remove leading asterisks/bullets
     if text.strip().startswith('*'):
-        # Split by the asterisk markers; the real response sits in the final chunk
         parts = text.split('*')
-        last_part = parts[-1].strip()
-        
-        # Strip away any residual quote examples generated by the template leak
-        last_part = re.sub(r'^["\'].*?["\']\s*', '', last_part)
-        if last_part:
-            return last_part.strip()
+        text = parts[-1].strip()
 
-    # 3. Standard newline-based cleanup fallback
-    lines = text.split('\n')
-    cleaned = []
-    for line in lines:
-        stripped = line.strip()
-        if not stripped or stripped.startswith('*') or stripped.startswith('-'):
-            continue
-        cleaned.append(line)
-
-    result = '\n'.join(cleaned).strip()
+    # 6. Final cleanup
+    result = text.strip()
     return result or text
 
-async def _call_glm(system_prompt: str, user_content: str) -> str:
-    """Call GLM primary model with low temperature."""
-    response = await glm_client.chat.completions.create(
-        model="GLM-4.7-Flash",
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_content},
-        ],
-        temperature=0.1,  # Lowered from 0.7 to stop structural hallucinations
-    )
-    return response.choices[0].message.content
 
-# async def _call_glm(system_prompt: str, user_content: str) -> str:
-#     """Call GLM primary model. Raises on failure so caller can fallback."""
-#     response = await glm_client.chat.completions.create(
-#         model="GLM-4.7-Flash",
-#         messages=[
-#             {"role": "system", "content": system_prompt},
-#             {"role": "user", "content": user_content},
-#         ],
-#         temperature=0.7,
-#     )
-#     return response.choices[0].message.content
+def _extract_final_response(text: str) -> str:
+    """
+    Extract the final response from text that may contain multiple quoted
+    candidate responses followed by the actual unquoted response.
+    
+    Strategy:
+    1. Split text into quoted blocks (inside " ") and unquoted text outside.
+    2. If there are quoted blocks and the last piece of unquoted text is
+       substantial (>= 3 words), use it as the final response.
+    3. Otherwise, fall back to the last quoted block.
+    """
+    import re
+    
+    # Find all quoted blocks and the text between/after them
+    # Pattern matches quoted strings (with ASCII quotes after normalization)
+    parts = re.split(r'("[^"]{10,}")', text)
+    
+    quoted_blocks = []
+    unquoted_parts = []
+    
+    for i, part in enumerate(parts):
+        if part.startswith('"') and part.endswith('"'):
+            # Quoted block - strip the quotes
+            quoted_blocks.append(part[1:-1].strip())
+        else:
+            # Unquoted text
+            stripped = part.strip()
+            if stripped:
+                unquoted_parts.append(stripped)
+    
+    # If there are no quoted blocks, return text as-is
+    if not quoted_blocks:
+        return text
+    
+    # Get the last unquoted text (if any)
+    last_unquoted = unquoted_parts[-1] if unquoted_parts else ""
+    
+    # Count words in the last unquoted text
+    last_unquoted_words = len(last_unquoted.split()) if last_unquoted else 0
+    
+    # If the last unquoted text is substantial, use it as the final response
+    if last_unquoted_words >= 3:
+        return last_unquoted
+    
+    # Otherwise, use the last quoted block
+    return quoted_blocks[-1]
 
 
-# def _call_gemma(user_content: str) -> str:
-#     """Call Gemma 4 as fallback (uses existing google-generativeai package)."""
-#     model = _get_gemma_model()
-#     response = model.generate_content(
-#         [user_content],
-#         generation_config={
-#             "temperature": 0.7,
-#         },
-#     )
-#     return response.text.strip()
-def _call_gemma(user_content: str) -> str:
-    """Call Gemma 4 as fallback with low temperature."""
+def _call_gemma(system_prompt: str, user_content: str) -> str:
+    """Call Gemma 4 with low temperature and timeout."""
     model = _get_gemma_model()
-    response = model.generate_content(
-        [user_content],
-        generation_config={
-            "temperature": 0.1,  # Lowered from 0.7 to enforce consistency
-        },
-    )
-    return response.text.strip()
+    # Combine system prompt and user content for Gemma (which doesn't have native system role)
+    combined_prompt = f"{system_prompt}\n\nUser: {user_content}\n\nAssistant:"
+    try:
+        response = model.generate_content(
+            combined_prompt,
+            generation_config={
+                "temperature": 0.1,
+                "max_output_tokens": 150,
+            },
+            # timeout=20.0,  # 20 second timeout for Gemma calls
+        )
+        return response.text.strip()
+    except Exception as e:
+        print(f"[Chat] Gemma generation exception: {type(e).__name__}: {e}")
+        raise
+
 
 async def _ask_llm(user_prompt: str, system_prompt_override: str = None) -> str:
     """
-    Call LLM with automatic fallback:
-      1. Try GLM first
-      2. On 429 / connection error → fall back to Gemma 4
-      3. Strip any leaked reasoning from output
+    Call Gemma LLM with timeout.
+    1. Call Gemma 4
+    2. Strip any leaked reasoning from output
     """
+    import asyncio
     sys = system_prompt_override or SYSTEM_PROMPT
     try:
-        raw = await _call_glm(sys, user_prompt)
+        loop = asyncio.get_event_loop()
+        raw = await asyncio.wait_for(
+            loop.run_in_executor(None, _call_gemma, sys, user_prompt),
+            timeout=25.0  # 25 second timeout for executor
+        )
         return _strip_reasoning(raw)
+    except asyncio.TimeoutError:
+        print(f"[Chat] Gemma call timed out (25s)")
+        return "I'm taking longer than usual to think. Could you try again?"
     except Exception as e:
-        err_str = str(e)
-        if "429" in err_str or "rate" in err_str.lower() or "connection" in err_str.lower():
-            print(f"[Chat] GLM hit rate limit/error, falling back to Gemma 4: {e}")
-            try:
-                # Run sync gemma call in executor to avoid blocking event loop
-                import asyncio
-                loop = asyncio.get_event_loop()
-                raw = await loop.run_in_executor(None, _call_gemma, user_prompt)
-                return _strip_reasoning(raw)
-            except Exception as gemma_err:
-                print(f"[Chat] Gemma fallback also failed: {gemma_err}")
-                return "I'm having trouble connecting right now. Please try again in a moment."
-        else:
-            # Non-recoverable error (bad auth etc), don't retry
-            raise
+        print(f"[Chat] Gemma error: {type(e).__name__}: {e}")
+        import traceback
+        traceback.print_exc()
+        return "I'm having trouble connecting right now. Please try again in a moment."
 
 
 def _is_memory_query(text: str) -> bool:
@@ -330,7 +333,7 @@ async def _handle_general_chat(user_id: str, message: str) -> str:
     # Get recent chat history for context
     recent_chats = get_chat_history(user_id, limit=10)
 
-    # Build conversation history as a single prompt for Gemma fallback compatibility
+    # Build conversation history as a single prompt
     history_parts = []
     for chat in recent_chats[-8:]:
         role_label = chat.get("role", "user")

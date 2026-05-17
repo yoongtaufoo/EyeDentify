@@ -66,7 +66,7 @@ _FALLBACK_VOICE = "en-US-GuyNeural"   # Backup male voice
 
 async def text_to_speech(text: str, voice: str = None) -> bytes:
     """
-    Convert text to MP3 audio bytes using edge-tts.
+    Convert text to MP3 audio bytes using edge-tts with timeout.
     """
     if not text or not text.strip():
         print("[TTS] Empty text received, skipping")
@@ -74,6 +74,7 @@ async def text_to_speech(text: str, voice: str = None) -> bytes:
     
     try:
         import edge_tts
+        import asyncio
         
         voice = voice or _DEFAULT_VOICE
         communicate = edge_tts.Communicate(text, voice)
@@ -83,7 +84,19 @@ async def text_to_speech(text: str, voice: str = None) -> bytes:
         tmp_path = tmp.name
         tmp.close() # Release the file handle lock instantly so edge-tts can write to it!
         
-        await communicate.save(tmp_path)
+        # Add timeout to edge-tts.save() to prevent hanging
+        try:
+            await asyncio.wait_for(communicate.save(tmp_path), timeout=15.0)
+        except asyncio.TimeoutError:
+            print(f"[TTS] edge-tts.save() timed out after 15s")
+            # Clean up and fall back
+            try:
+                os.unlink(tmp_path)
+            except:
+                pass
+            if voice and voice != _FALLBACK_VOICE:
+                return await text_to_speech(text, _FALLBACK_VOICE)
+            return b""
         
         with open(tmp_path, "rb") as f:
             audio_bytes = f.read()
@@ -98,10 +111,12 @@ async def text_to_speech(text: str, voice: str = None) -> bytes:
         return audio_bytes
         
     except ImportError:
-        print("[TTS] edge-tts not installed, falling back to dummy response")
+        print("[TTS] edge-tts not installed")
         return b""
     except Exception as e:
-        print(f"[TTS] Error generating speech: {e}")
+        print(f"[TTS] Error generating speech: {type(e).__name__}: {e}")
+        import traceback
+        traceback.print_exc()
         if voice and voice != _FALLBACK_VOICE:
             print(f"[TTS] Retrying with fallback voice {_FALLBACK_VOICE}...")
             return await text_to_speech(text, _FALLBACK_VOICE)
