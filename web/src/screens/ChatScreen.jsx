@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { isSpeechSupported, startRecording, stopRecording } from '../utils/whisper';
-import { sendChatMessageWithAudio, processImage, getChatHistory, getTTSAudio } from '../services/apiService';
+import { sendChatMessage, processImage, getChatHistory } from '../services/apiService';
 
 const ChatScreen = ({ user, onLogout }) => {
   // Capture userId once
@@ -314,11 +314,10 @@ const ChatScreen = ({ user, onLogout }) => {
 
     try {
       const userId = requireUid();
-      const response = await sendChatMessageWithAudio(userId, text);
+      const response = await sendChatMessage(userId, text);
 
       let botText = '';
       let botImage = null;
-      let botAudioB64 = null;
 
       if (response.ai_response) botText = response.ai_response;
       else if (response.response) botText = response.response;
@@ -330,15 +329,11 @@ const ChatScreen = ({ user, onLogout }) => {
       }
 
       if (response.processedImage) botImage = response.processedImage;
-      if (response.audio_base64) botAudioB64 = response.audio_base64;
-
-      const botMsg = { role: 'assistant', text: botText, image: botImage, audioBase64: botAudioB64, timestamp: Date.now() };
+      const botMsg = { role: 'assistant', text: botText, image: botImage, timestamp: Date.now() };
       setMessages(prev => [...prev, botMsg]);
 
       if (botText && !botText.startsWith('Error:')) {
-        if (!playBackendTTS(botAudioB64)) {
-          speak(botText);
-        }
+        speak(botText);
       }
     } catch (error) {
       console.error('Send error:', error);
@@ -347,7 +342,7 @@ const ChatScreen = ({ user, onLogout }) => {
     } finally {
       setIsLoading(false);
     }
-  }, [inputText, user, playBackendTTS]);
+  }, [inputText, user]);
 
   // Capture and send image
   const handleCaptureAndSend = async () => {
@@ -374,14 +369,7 @@ const ChatScreen = ({ user, onLogout }) => {
       setMessages(prev => [...prev, botMsg]);
 
       if (description) {
-        try {
-          const ttsResp = await getTTSAudio(description);
-          if (!playBackendTTS(ttsResp.audio_base64)) {
-            speak(description);
-          }
-        } catch {
-          speak(description);
-        }
+        speak(description);
       }
     } catch (error) {
       console.error('Vision error:', error);

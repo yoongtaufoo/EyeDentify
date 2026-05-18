@@ -430,55 +430,8 @@ async def chat_history(user_id: str, limit: int = 9999):
 
 
 # ============================================================
-# TTS ENDPOINT (Text-to-Speech) - returns audio for hardware/frontend
-# POST /chat/tts - text -> base64 MP3 audio
-# ============================================================
-
-@app.post("/chat/tts")
-async def chat_tts(
-    text: str = Form(...),
-    voice: str = Form(None),
-):
-    """
-    Convert text to speech audio (base64-encoded MP3).
-    
-    Used by:
-      - Hardware module: gets MP3 to play via speaker
-      - Web/app frontend: can play returned audio or use its own TTS
-    
-    Returns: { audio_base64: str, format: "mp3", success: bool }
-    """
-    import asyncio
-    from tts import text_to_speech_base64
-    try:
-        # Add timeout to prevent hanging
-        audio_b64 = await asyncio.wait_for(
-            text_to_speech_base64(text, voice),
-            timeout=20.0
-        )
-        if not audio_b64:
-            raise HTTPException(status_code=500, detail="TTS generation failed")
-        
-        return {
-            "audio_base64": audio_b64,
-            "format": "mp3",
-            "success": True,
-        }
-    except asyncio.TimeoutError:
-        print(f"[TTS API] TTS generation timed out after 20s")
-        raise HTTPException(status_code=500, detail="TTS generation timed out")
-    except HTTPException:
-        raise
-    except Exception as e:
-        print(f"[TTS API] Error: {type(e).__name__}: {e}")
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"TTS failed: {str(e)}")
-
-
-# ============================================================
-# CHAT + TTS COMBINED ENDPOINT - send message, get response text + audio
-# POST /chat/send-audio - convenience endpoint that returns both
+# CHAT WITH AUDIO INPUT - transcribe voice, return text response
+# POST /chat/send-audio
 # ============================================================
 
 @app.post("/chat/send-audio")
@@ -490,45 +443,40 @@ async def chat_send_audio(
     current_description: str = Form(None),
 ):
     """
-    Send a message and get back BOTH response text AND audio (base64 MP3).
-    
-    This is the recommended endpoint for hardware devices:
-    1. Sends message through AI chat (Gemma)
-    2. Converts response to speech using edge-tts
-    3. Returns both so the hardware can play it immediately
-    
-    Returns: { response: str, audio_base64: str, audio_text: str }
+    Send voice or text to the chatbot (Gemma). No server-side TTS.
+
+    1. If audio_base64 provided, transcribe with Whisper
+    2. Run chat (Gemma)
+    3. Return text response (client handles speech via device TTS)
+
+    Returns: { response: str, audio_text: str | null }
     """
     try:
-        # Step 1: Transcribe audio if provided
         audio_text = None
         if audio_base64:
             from audio import transcribe_audio_base64
             audio_text = await transcribe_audio_base64(audio_base64)
             message = audio_text or ""
             if not audio_text:
-                return {"response": "I couldn't understand that audio. Could you try again?", "audio_base64": "", "audio_text": ""}
-        
-        # Step 2: Process through chat engine (Gemma)
+                return {
+                    "response": "I couldn't understand that audio. Could you try again?",
+                    "audio_text": "",
+                }
+
         from chat import handle_chat
-        from tts import text_to_speech_base64
-        
+
         response_text = await handle_chat(
             user_id=user_id,
             message=message,
             current_description=current_description,
             current_memory_id=current_memory_id,
         )
-        
-        # Step 3: Convert response to audio
-        audio_b64 = await text_to_speech_base64(response_text)
-        
+
         return {
             "response": response_text,
-            "audio_base64": audio_b64 or "",
             "audio_text": audio_text,
         }
-    
+
     except Exception as e:
         print(f"[API] Chat+Audio error: {e}")
         raise HTTPException(status_code=500, detail=f"Chat processing failed: {str(e)}")

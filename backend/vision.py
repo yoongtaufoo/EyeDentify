@@ -11,19 +11,22 @@ _supabase_key = os.getenv("SUPABASE_KEY")
 _storage_client = create_client(_supabase_url, _supabase_key)
 _STORAGE_BUCKET = "images"
 
-# Gemma vision model (Google AI Studio)
-_gemma_vision_model = None
+# Gemma vision (Google AI Studio) — primary + fallbacks if API returns 5xx
+_VISION_MODEL_IDS = [
+    os.getenv("GEMMA_VISION_MODEL", "gemma-4-26b-a4b-it"),
+    "gemma-3-27b-it",
+]
+_genai_configured = False
 
 
-def _get_gemma_vision_model():
-    """Lazy-init Gemma vision model using google-generativeai package."""
-    global _gemma_vision_model
-    if _gemma_vision_model is None:
-        genai.configure(api_key=os.getenv("GOOGLE_AI_STUDIO_KEY"))
-        # Use Gemma 3 27B which is available via Google AI Studio / generativeai SDK
-        # _gemma_vision_model = genai.GenerativeModel("gemma-3-27b-it")
-        _gemma_vision_model = genai.GenerativeModel("gemma-4-26b-a4b-it")
-    return _gemma_vision_model
+def _ensure_genai():
+    global _genai_configured
+    if not _genai_configured:
+        api_key = os.getenv("GOOGLE_AI_STUDIO_KEY") or os.getenv("GEMINI_API_KEY")
+        if not api_key:
+            raise RuntimeError("GOOGLE_AI_STUDIO_KEY or GEMINI_API_KEY is not set")
+        genai.configure(api_key=api_key)
+        _genai_configured = True
 
 
 def _upload_image_to_storage(image_bytes: bytes, user_id: str) -> str | None:
@@ -43,71 +46,100 @@ def _upload_image_to_storage(image_bytes: bytes, user_id: str) -> str | None:
         return None
 
 
+def _looks_like_description(text: str) -> bool:
+    """True if text looks like a short image caption, not model reasoning."""
+    import re
+
+    s = text.strip().strip('"\'').strip()
+    if not s or len(s) < 12:
+        return False
+
+    words = s.split()
+    if len(words) < 4 or len(words) > 20:
+        return False
+
+    lower = s.lower()
+
+    reject_substrings = [
+        "task:", "constraint:", "draft", "word count", "words)",
+        "self-correction", "final choice", "final check", "let's",
+        "let us", "stick to", "one short sentence", "under 15 words",
+        "subject:", "setting:", "arrangement:", "image content:",
+        "yes.", "no.", "good.", "too long", "punchier", "accurate",
+        "try:", "wait,", "actually,", "both are good", "i'll go",
+        "total:", "perfect.", "check if",
+    ]
+    if any(r in lower for r in reject_substrings):
+        return False
+
+    if re.search(r"\(\s*\d+\s+words?\s*\)", s, re.IGNORECASE):
+        return False
+
+    # Reasoning lines often start with bullets, numbers, or meta labels
+    if re.match(r"^[\*\-\d\.\)]", s):
+        return False
+
+    # Should read like a sentence (letters/spaces/punctuation only)
+    if not re.match(r"^[A-Za-z].*[.!?]?$", s):
+        return False
+
+    alpha_ratio = sum(c.isalpha() or c.isspace() for c in s) / max(len(s), 1)
+    return alpha_ratio > 0.85
+
+
+def _normalize_description(text: str) -> str:
+    s = text.strip().strip('"\'').rstrip(".")
+    s = s.replace("*", "").strip()
+    if not s:
+        return s
+    return s + "."
+
+
 def _clean_description(raw_text: str) -> str:
     """
-    Clean up Gemma output to extract the actual description from chain-of-thought reasoning.
-    The model often outputs reasoning, drafts, and then the final answer.
+    Extract one speakable caption from Gemma chain-of-thought output.
+    Never blindly use the last quoted span — mismatched quotes capture reasoning.
     """
     import re
+
     text = raw_text.strip()
-    
-    # STRATEGY: Extract the last meaningful sentence/quoted string since that's the final answer
-    
-    # 1. First, look for the last quoted string (model often puts final answer in quotes)
-    all_quotes = re.findall(r'"([^"]{10,})"', text)
-    if all_quotes:
-        # Use the last quoted string
-        candidate = all_quotes[-1].strip()
-        # Verify it's not a reject phrase
-        reject_phrases = ['task:', 'draft', 'constraint:', 'final check', 'alternative']
-        if not any(phrase in candidate.lower() for phrase in reject_phrases):
-            words = candidate.split()
-            if len(words) <= 25:
-                # Ensure single period at end (remove existing periods first)
-                candidate = candidate.rstrip('.').strip()
-                print(f"[VISION] Extracted from quotes: {candidate}")
-                return candidate + '.'
-    
-    # 2. If no good quoted string, extract lines that look like actual descriptions
-    #    (skip reasoning, drafts, numbering, asterisks)
-    lines = text.split('\n')
-    description_candidates = []
-    
-    for line in lines:
+
+    # (position in text, caption) — pick the last valid match in the full response
+    candidates: list[tuple[int, str]] = []
+
+    for match in re.finditer(r'"([^"]{12,180})"', text):
+        candidate = match.group(1).strip()
+        if _looks_like_description(candidate):
+            candidates.append((match.start(), candidate))
+
+    line_start = 0
+    for line in text.splitlines():
         stripped = line.strip()
-        if not stripped or stripped.startswith('*') or stripped.startswith('-'):
-            continue
-        
-        # Skip reasoning/analysis lines
-        line_lower = stripped.lower()
-        skip_keywords = [
-            'task:', 'constraint:', 'draft', 'final', 'check:',
-            'description:', 'let', 'try:', 'count:', 'wait,',
-            'alternative:', 'choice:', 'subject:', 'setting:',
-            'arrangement:', 'analyze', 'examine', 'one short',
-            'under 15 words', 'accurate', 'punchier'
-        ]
-        
-        if any(kw in line_lower for kw in skip_keywords):
-            continue
-        
-        # Remove markdown/bullet formatting
-        cleaned = stripped.replace('**', '').replace('*', '').lstrip('0123456789.)').strip()
-        
-        # Accept lines that look like complete descriptions
-        if len(cleaned) > 10 and len(cleaned.split()) < 25:
-            description_candidates.append(cleaned)
-    
-    # 3. Use the last candidate (usually closest to final answer)
-    if description_candidates:
-        final_desc = description_candidates[-1]
-        # Ensure single period at end (remove existing periods first)
-        final_desc = final_desc.rstrip('.').strip()
-        print(f"[VISION] Extracted from lines: {final_desc}")
-        return final_desc + '.'
-    
-    # 4. Fallback: return the end of the raw text
-    print(f"[VISION] Using fallback extraction")
+        if stripped:
+            cleaned = re.sub(r"\s*[\(\-–].*$", "", stripped).strip()
+            cleaned = cleaned.replace("*", "").strip().strip('"\'')
+            if _looks_like_description(cleaned):
+                candidates.append((line_start, cleaned))
+        line_start += len(line) + 1
+
+    tail = text[-400:] if len(text) > 400 else text
+    tail_offset = len(text) - len(tail)
+    for match in re.finditer(
+        r"([A-Z][^.!?\n]{10,120}(?:displayed|arranged|showing|sitting|standing|holding|on|in|with|near)[^.!?\n]{0,80}[.!?])",
+        tail,
+    ):
+        candidate = match.group(1).strip().strip('"\'')
+        if _looks_like_description(candidate):
+            candidates.append((tail_offset + match.start(), candidate))
+
+    if candidates:
+        candidates.sort(key=lambda x: x[0])
+        best = candidates[-1][1]
+        result = _normalize_description(best)
+        print(f"[VISION] Extracted description: {result}")
+        return result
+
+    print("[VISION] Could not extract description from model output")
     return "Image captured. Please try again for description."
 
 
@@ -181,48 +213,105 @@ def _clean_description(raw_text: str) -> str:
 #         traceback.print_exc()
 #         return "Image captured but description failed."
 
-async def _call_gemma_vision(data_url: str) -> str:
-    """
-    Call Gemma 4 (multimodal vision model) for image description.
-    Uses google-generativeai package with image data URL.
-    """
-    import asyncio
+def _prepare_image_pil(image_bytes: bytes):
+    """Decode and downscale large photos to reduce Google API 500 errors."""
     import io
     from PIL import Image
-    import google.generativeai as genai
 
-    api_key = os.getenv("GOOGLE_AI_STUDIO_KEY")
-    if not api_key:
-        print("[VISION] GOOGLE_AI_STUDIO_KEY not set")
+    image_pil = Image.open(io.BytesIO(image_bytes))
+    if image_pil.mode not in ("RGB", "L"):
+        image_pil = image_pil.convert("RGB")
+    max_dim = 1024
+    if max(image_pil.size) > max_dim:
+        image_pil.thumbnail((max_dim, max_dim), Image.Resampling.LANCZOS)
+    return image_pil
+
+
+_VISION_PROMPT = (
+    "Describe this image in ONE short sentence (maximum 15 words) for a blind user "
+    "who will hear it via text-to-speech.\n\n"
+    "Rules:\n"
+    "- Output ONLY the sentence itself\n"
+    "- No reasoning, drafts, bullet points, word counts, or quotation marks\n"
+    "- Start immediately with the description"
+)
+
+
+def _generate_vision_description(model, image_pil) -> str | None:
+    import google.generativeai as genai
+    from google.api_core import exceptions as google_exceptions
+    import time
+
+    last_error = None
+    for attempt in range(3):
+        try:
+            response = model.generate_content(
+                [_VISION_PROMPT, image_pil],
+                generation_config=genai.types.GenerationConfig(
+                    temperature=0.0,
+                    max_output_tokens=40,
+                ),
+            )
+            if response and response.text:
+                desc = response.text.strip()
+                print(f"[VISION] Raw response: '{desc[:200]}...'")
+                if len(desc) > 5:
+                    return _clean_description(desc)
+            return None
+        except (
+            google_exceptions.InternalServerError,
+            google_exceptions.ServiceUnavailable,
+            google_exceptions.DeadlineExceeded,
+            google_exceptions.ResourceExhausted,
+        ) as e:
+            last_error = e
+            wait = 2 ** attempt
+            print(f"[VISION] Transient error (attempt {attempt + 1}/3): {e} — retry in {wait}s")
+            time.sleep(wait)
+        except Exception as e:
+            print(f"[VISION] Model error: {type(e).__name__}: {e}")
+            raise
+
+    if last_error:
+        raise last_error
+    return None
+
+
+async def _call_gemma_vision(data_url: str) -> str:
+    """Call Gemma multimodal vision with retries and model fallbacks."""
+    import asyncio
+    import io
+
+    try:
+        _ensure_genai()
+    except RuntimeError as e:
+        print(f"[VISION] {e}")
         return "Image captured but description failed."
 
     try:
-        # Decode base64 data URL to bytes
-        b64_data = data_url.split(',', 1)[1] if ',' in data_url else data_url
+        b64_data = data_url.split(",", 1)[1] if "," in data_url else data_url
         image_bytes = base64.b64decode(b64_data)
+        image_pil = _prepare_image_pil(image_bytes)
 
-        # Convert bytes to PIL Image
-        image_pil = Image.open(io.BytesIO(image_bytes))
+        loop = asyncio.get_event_loop()
+        seen_models = []
 
-        # Simple direct model call (no executor wrapper)
-        model = _get_gemma_vision_model()
-        prompt = "Describe this image in one short sentence under 15 words."
-        
-        response = model.generate_content(
-            [prompt, image_pil],
-            generation_config=genai.types.GenerationConfig(
-                temperature=0.1,
-                max_output_tokens=50,
-            ),
-        )
+        for model_id in _VISION_MODEL_IDS:
+            if not model_id or model_id in seen_models:
+                continue
+            seen_models.append(model_id)
+            try:
+                model = genai.GenerativeModel(model_id)
+                print(f"[VISION] Trying model: {model_id}")
+                desc = await loop.run_in_executor(
+                    None, _generate_vision_description, model, image_pil
+                )
+                if desc:
+                    return desc
+            except Exception as e:
+                print(f"[VISION] {model_id} failed: {type(e).__name__}: {e}")
 
-        if response and response.text:
-            desc = response.text.strip()
-            print(f"[VISION] Raw response: '{desc}'")
-            if len(desc) > 5:
-                return _clean_description(desc)
-
-        print("[VISION] Model returned empty response")
+        print("[VISION] All models failed or returned empty")
         return "Image captured but description failed."
 
     except Exception as e:
