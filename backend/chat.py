@@ -18,16 +18,36 @@ from database import get_chat_history, save_chat_message, get_memories_by_date, 
 
 _gemma_model = None
 
+# Override via .env if needed: GEMMA_CHAT_MODEL=gemma-3-27b-it
+_GEMMA_MODEL_ID = os.getenv("GEMMA_CHAT_MODEL", "gemma-4-26b-a4b-it")
+_MAX_HISTORY_CHARS_PER_MSG = 300
+
+
+def _get_api_key() -> str:
+    return os.getenv("GOOGLE_AI_STUDIO_KEY") or os.getenv("GEMINI_API_KEY") or ""
+
 
 def _get_gemma_model():
     """Lazy-init Gemma model using google-generativeai package."""
     global _gemma_model
     if _gemma_model is None:
         import google.generativeai as genai
-        genai.configure(api_key=os.getenv("GOOGLE_AI_STUDIO_KEY"))
-        # Use Gemma 3 27B which is available via Google AI Studio / generativeai SDK
-        _gemma_model = genai.GenerativeModel("gemma-4-26b-a4b-it")
+        api_key = _get_api_key()
+        if not api_key:
+            raise RuntimeError("GOOGLE_AI_STUDIO_KEY or GEMINI_API_KEY is not set")
+        genai.configure(api_key=api_key)
+        _gemma_model = genai.GenerativeModel(_GEMMA_MODEL_ID)
     return _gemma_model
+
+
+def _trim_for_prompt(text: str, max_len: int = _MAX_HISTORY_CHARS_PER_MSG) -> str:
+    """Keep prompts small — long vision/CoT blobs in history can break the API."""
+    if not text:
+        return ""
+    text = " ".join(text.split())
+    if len(text) <= max_len:
+        return text
+    return text[: max_len - 3].rstrip() + "..."
 
 
 SYSTEM_PROMPT = """You are EyeDentify, an AI assistant for blind and visually impaired users.
@@ -90,77 +110,145 @@ def _strip_reasoning(text: str) -> str:
         parts = text.split('*')
         text = parts[-1].strip()
 
-    # 6. Final cleanup
-    result = text.strip()
+    # 6. Remove duplicated sentence echoes and stray quotes
+    result = _dedupe_repeated_reply(text.strip())
     return result or text
 
 
-def _extract_final_response(text: str) -> str:
+def _normalize_reply(s: str) -> str:
+    """Lowercase alnum-only key for fuzzy duplicate detection."""
+    import re
+    return re.sub(r"[^a-z0-9]+", "", (s or "").lower())
+
+
+def _dedupe_repeated_reply(text: str) -> str:
     """
-    Extract the final response from text that may contain multiple quoted
-    candidate responses followed by the actual unquoted response.
-    
-    Strategy:
-    1. Split text into quoted blocks (inside " ") and unquoted text outside.
-    2. If there are quoted blocks and the last piece of unquoted text is
-       substantial (>= 3 words), use it as the final response.
-    3. Otherwise, fall back to the last quoted block.
+    Gemma often echoes the same sentence twice, e.g.:
+      Hello! ... need." Hello! ... need.
+      "Hello! ... need." Hello! ... need.
     """
     import re
-    
-    # Find all quoted blocks and the text between/after them
-    # Pattern matches quoted strings (with ASCII quotes after normalization)
-    parts = re.split(r'("[^"]{10,}")', text)
-    
+
+    text = re.sub(r"\s+", " ", text.strip())
+    if not text:
+        return text
+
+    # Back-to-back duplicate (optional quote/punctuation between copies)
+    dup = re.match(
+        r'^(.+?)(?:["\'])?[.!?]?\s+\1["\']?[.!?]?\s*$',
+        text,
+        re.IGNORECASE | re.DOTALL,
+    )
+    if dup:
+        s = dup.group(1).strip().strip("\"'")
+        if s and not s[-1] in ".!?":
+            s += "."
+        return s
+
+    # Quoted copy then unquoted copy (or vice versa)
+    parts = re.split(r'("[^"]{8,}")', text)
+    quoted = []
+    unquoted = []
+    for part in parts:
+        if part.startswith('"') and part.endswith('"'):
+            quoted.append(part[1:-1].strip())
+        elif part.strip():
+            unquoted.append(part.strip())
+
+    candidates = []
+    if quoted:
+        candidates.append(quoted[-1])
+    if unquoted:
+        candidates.append(unquoted[-1])
+
+    if len(candidates) >= 2:
+        if _normalize_reply(candidates[0]) == _normalize_reply(candidates[1]):
+            return candidates[-1]
+        # One may be substring of the other
+        a, b = _normalize_reply(candidates[0]), _normalize_reply(candidates[1])
+        if a and b and (a in b or b in a):
+            return candidates[0] if len(candidates[0]) >= len(candidates[1]) else candidates[1]
+
+    if len(candidates) == 1:
+        return candidates[0]
+
+    return text.strip().strip("\"'")
+
+
+def _extract_final_response(text: str) -> str:
+    """Pick one speakable reply from quoted/unquoted Gemma output."""
+    import re
+
+    parts = re.split(r'("[^"]{8,}")', text)
     quoted_blocks = []
     unquoted_parts = []
-    
-    for i, part in enumerate(parts):
+
+    for part in parts:
         if part.startswith('"') and part.endswith('"'):
-            # Quoted block - strip the quotes
             quoted_blocks.append(part[1:-1].strip())
-        else:
-            # Unquoted text
-            stripped = part.strip()
-            if stripped:
-                unquoted_parts.append(stripped)
-    
-    # If there are no quoted blocks, return text as-is
-    if not quoted_blocks:
-        return text
-    
-    # Get the last unquoted text (if any)
+        elif part.strip():
+            unquoted_parts.append(part.strip())
+
+    if not quoted_blocks and not unquoted_parts:
+        return _dedupe_repeated_reply(text)
+
+    last_quoted = quoted_blocks[-1] if quoted_blocks else ""
     last_unquoted = unquoted_parts[-1] if unquoted_parts else ""
-    
-    # Count words in the last unquoted text
-    last_unquoted_words = len(last_unquoted.split()) if last_unquoted else 0
-    
-    # If the last unquoted text is substantial, use it as the final response
-    if last_unquoted_words >= 3:
+
+    if last_quoted and last_unquoted:
+        if _normalize_reply(last_quoted) == _normalize_reply(last_unquoted):
+            return last_unquoted
+        if len(last_unquoted.split()) >= 3:
+            return last_unquoted
+        return last_quoted
+
+    if last_unquoted:
         return last_unquoted
-    
-    # Otherwise, use the last quoted block
-    return quoted_blocks[-1]
+    if last_quoted:
+        return last_quoted
+
+    return _dedupe_repeated_reply(text)
 
 
 def _call_gemma(system_prompt: str, user_content: str) -> str:
-    """Call Gemma 4 with low temperature and timeout."""
+    """Call Gemma with retries on transient Google 5xx errors."""
+    import time
+    from google.api_core import exceptions as google_exceptions
+
     model = _get_gemma_model()
-    # Combine system prompt and user content for Gemma (which doesn't have native system role)
+    user_content = _trim_for_prompt(user_content, max_len=4000)
     combined_prompt = f"{system_prompt}\n\nUser: {user_content}\n\nAssistant:"
-    try:
-        response = model.generate_content(
-            combined_prompt,
-            generation_config={
-                "temperature": 0.1,
-                "max_output_tokens": 150,
-            },
-            # timeout=20.0,  # 20 second timeout for Gemma calls
-        )
-        return response.text.strip()
-    except Exception as e:
-        print(f"[Chat] Gemma generation exception: {type(e).__name__}: {e}")
-        raise
+
+    last_error = None
+    for attempt in range(3):
+        try:
+            response = model.generate_content(
+                combined_prompt,
+                generation_config={
+                    "temperature": 0.1,
+                    "max_output_tokens": 150,
+                },
+            )
+            return response.text.strip()
+        except (
+            google_exceptions.InternalServerError,
+            google_exceptions.ServiceUnavailable,
+            google_exceptions.DeadlineExceeded,
+            google_exceptions.ResourceExhausted,
+        ) as e:
+            last_error = e
+            wait = 2 ** attempt
+            print(
+                f"[Chat] Gemma transient error (attempt {attempt + 1}/3): "
+                f"{type(e).__name__}: {e} — retrying in {wait}s"
+            )
+            time.sleep(wait)
+        except Exception as e:
+            print(f"[Chat] Gemma generation exception: {type(e).__name__}: {e}")
+            raise
+
+    print(f"[Chat] Gemma failed after retries: {type(last_error).__name__}: {last_error}")
+    raise last_error
 
 
 async def _ask_llm(user_prompt: str, system_prompt_override: str = None) -> str:
@@ -290,17 +378,28 @@ async def _handle_memory_response(user_id: str, question: str) -> str:
 
     # Build context from memories
     memory_texts = []
+    import json
+
     for m in memories:
+        if not isinstance(m, dict):
+            continue
         ts = m.get("created_at", "")
         # Parse timestamp to readable format
         try:
             dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
             time_str = dt.strftime("%I:%M %p")
-        except:
+        except Exception:
             time_str = "unknown time"
 
         desc = m.get("description", "")
-        objs = m.get("objects", [])
+        objs = m.get("objects") or []
+        if isinstance(objs, str):
+            try:
+                objs = json.loads(objs)
+            except json.JSONDecodeError:
+                objs = []
+        if not isinstance(objs, list):
+            objs = []
         obj_labels = [o.get("label", "") for o in objs if isinstance(o, dict)]
         obj_str = f" Objects: {', '.join(obj_labels)}" if obj_labels else ""
         memory_texts.append(f"[{time_str}] {desc}{obj_str}")
@@ -334,10 +433,13 @@ async def _handle_general_chat(user_id: str, message: str) -> str:
 
     # Build conversation history as a single prompt
     history_parts = []
-    for chat in recent_chats[-8:]:
+    for chat in recent_chats[-6:]:  # slice, not [-6] — iterating a dict loops keys (str)
+        if not isinstance(chat, dict):
+            continue
         role_label = chat.get("role", "user")
         role_name = "User" if role_label == "user" else "Assistant"
-        history_parts.append(f"{role_name}: {chat.get('content', '')}")
+        content = _trim_for_prompt(str(chat.get("content") or ""))
+        history_parts.append(f"{role_name}: {content}")
     history_context = "\n".join(history_parts) if history_parts else ""
 
     if history_context:
