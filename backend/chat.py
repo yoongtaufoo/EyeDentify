@@ -9,7 +9,6 @@ SHARED by both in-app chat and hardware chat modules.
 import os
 from datetime import datetime, timedelta
 from typing import List, Optional
-from openai import AsyncOpenAI
 
 from database import get_chat_history, save_chat_message, get_memories_by_date, get_recent_memories
 
